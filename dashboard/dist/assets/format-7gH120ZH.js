@@ -1,0 +1,1 @@
+function u(e,i="en"){if(e==null||Number.isNaN(e))return"—";if(e<1e3)return`${Math.round(e)} ms`;const r=n=>{const t=n>=10?n.toFixed(0):n.toFixed(1);return i==="de"?t.replace(".",","):t};return e<6e4?`${r(e/1e3)} s`:e<36e5?`${r(e/6e4)} min`:`${r(e/36e5)} h`}export{u as f};

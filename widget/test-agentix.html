@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agentix - Reaktion auf Cybersicherheitsvorfälle und Datenverlust</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #ffffff;
+      color: #333;
+      line-height: 1.6;
+    }
+
+    /* Hero Section */
+    .hero {
+      background: #0d3d66;
+      color: white;
+      padding: 60px 20px;
+      text-align: center;
+    }
+
+    .hero h1 {
+      font-size: 2.5em;
+      margin-bottom: 15px;
+    }
+
+    .hero p {
+      font-size: 1.2em;
+      opacity: 0.9;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    /* Content Sections */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 60px 20px;
+    }
+
+    .section {
+      margin-bottom: 60px;
+    }
+
+    .section h2 {
+      color: #0d3d66;
+      margin-bottom: 20px;
+      font-size: 1.8em;
+    }
+
+    .section p {
+      margin-bottom: 15px;
+      font-size: 1.1em;
+      line-height: 1.7;
+    }
+
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 30px;
+      margin-top: 40px;
+    }
+
+    .feature-card {
+      background: #f8f9fa;
+      border-radius: 12px;
+      padding: 30px;
+      border-left: 4px solid #0d3d66;
+    }
+
+    .feature-card h3 {
+      color: #0d3d66;
+      margin-bottom: 10px;
+    }
+
+    .feature-card p {
+      color: #666;
+    }
+
+    footer {
+      background: #f8f9fa;
+      text-align: center;
+      padding: 30px;
+      margin-top: 60px;
+    }
+
+    footer p {
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <!-- Hero Section -->
+  <section class="hero">
+    <h1>Agentix</h1>
+    <p>Reaktion auf Cybersicherheitsvorfälle und Datenverlust</p>
+  </section>
+
+  <!-- Main Content -->
+  <div class="container">
+    <section class="section">
+      <h2>Über das Projekt</h2>
+      <p>
+        Agentix ist eine self-hosted, persona-driven Agent Platform mit
+        RAG-Wissensdatenbanken, Tool-Calling und einem einbettbaren Chat-Widget.
+      </p>
+      <p>
+        Unser CyberSecurityChatbot unterstützt Sie bei der schnellen und effizienten 
+        Reaktion auf IT-Sicherheitsvorfälle. Durch den Einsatz moderner KI-Technologie 
+        erhalten Sie sofortige Unterstützung und Handlungsempfehlungen.
+      </p>
+    </section>
+
+    <section class="section">
+      <h2>Funktionen</h2>
+      <div class="features">
+        <div class="feature-card">
+          <h3>24/7 Verfügbarkeit</h3>
+          <p>Der Chatbot steht Ihnen rund um die Uhr zur Verfügung, wenn ein Sicherheitsvorfall eintritt.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Schnelle Reaktion</h3>
+          <p>Sofortige Handlungsempfehlungen und Checklisten für den Ersten Einsatz.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Expertenwissen</h3>
+          <p>Fundiertes Wissen aus dem Bereich Cybersicherheit und Datenschutz.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>So funktioniert es</h2>
+      <p>
+        Klicken Sie einfach auf den Chat-Button in der unteren rechten Ecke, 
+        um den CyberSecurityChatbot zu öffnen. Nach dem Akzeptieren der Datenschutzrichtlinien 
+        können Sie sofort mit dem Chatten beginnen.
+      </p>
+    </section>
+  </div>
+
+  <footer>
+    <p>Powered by Agentix</p>
+  </footer>
+
+  <!-- Chat Widget Script -->
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/ort.min.js"></script>
+<script src="http://127.0.0.1:8000/widget/widget.umd.js"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    const chat = new window.AgentixChatWidget({
+      apiUrl: 'http://127.0.0.1:8000/v1'
+    });
+  });
+</script>

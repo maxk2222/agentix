@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agentix CyberChatbot Widget Demo</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 40px 20px;
+      color: #333;
+    }
+
+    .demo-container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .demo-header {
+      background: white;
+      padding: 40px;
+      border-radius: 12px;
+      margin-bottom: 40px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    }
+
+    .demo-header h1 {
+      font-size: 32px;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .demo-header p {
+      font-size: 16px;
+      color: #666;
+      line-height: 1.6;
+    }
+
+    .demo-content {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      margin-bottom: 40px;
+    }
+
+    .demo-section {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    }
+
+    .demo-section h2 {
+      font-size: 20px;
+      margin-bottom: 20px;
+      color: #667eea;
+    }
+
+    .demo-section p {
+      font-size: 14px;
+      line-height: 1.6;
+      color: #666;
+      margin-bottom: 15px;
+    }
+
+    .config-group {
+      margin-bottom: 20px;
+    }
+
+    .config-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #333;
+    }
+
+    .config-group input,
+    .config-group select,
+    .config-group textarea {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: 'Monaco', 'Courier New', monospace;
+    }
+
+    .config-group input:focus,
+    .config-group select:focus,
+    .config-group textarea:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .config-group textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    }
+
+    .btn-secondary {
+      background: #f3f4f6;
+      color: #333;
+      border: 1px solid #ddd;
+    }
+
+    .btn-secondary:hover {
+      background: #e5e7eb;
+    }
+
+    .demo-info {
+      background: #f0f4ff;
+      border-left: 4px solid #667eea;
+      padding: 15px;
+      border-radius: 6px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #333;
+    }
+
+    .demo-info strong {
+      color: #667eea;
+    }
+
+    .code-block {
+      background: #1a1a2e;
+      color: #e4e4e7;
+      padding: 15px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 12px;
+      font-family: 'Monaco', 'Courier New', monospace;
+      line-height: 1.5;
+    }
+
+    .demo-footer {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+      text-align: center;
+    }
+
+    .demo-footer p {
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 10px;
+    }
+
+    .demo-footer a {
+      color: #667eea;
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .demo-footer a:hover {
+      text-decoration: underline;
+    }
+
+    @media (max-width: 768px) {
+      .demo-content {
+        grid-template-columns: 1fr;
+      }
+
+      .demo-header h1 {
+        font-size: 24px;
+      }
+
+      .button-group {
+        flex-direction: column;
+      }
+    }
+
+    .status {
+      font-size: 13px;
+      padding: 10px;
+      margin-top: 10px;
+      border-radius: 6px;
+      text-align: center;
+    }
+
+    .status.success {
+      background: #dcfce7;
+      color: #166534;
+      border: 1px solid #86efac;
+    }
+
+    .status.error {
+      background: #fee2e2;
+      color: #dc2626;
+      border: 1px solid #fca5a5;
+    }
+  </style>
+</head>
+<body>
+  <div class="demo-container">
+    <!-- Header -->
+    <div class="demo-header">
+      <h1>🤖 Agentix CyberChatbot Widget</h1>
+      <p>
+        Ein modernes, sicheres und produktionsreifes Chat-Widget für deine Website.
+        Integriert mit OpenAI API für intelligente Antworten.
+      </p>
+    </div>
+
+    <!-- Main Content -->
+    <div class="demo-content">
+      <!-- Configuration Section -->
+      <div class="demo-section">
+        <h2>⚙️ Konfiguration</h2>
+        
+        <div class="config-group">
+          <label>OpenAI API Key</label>
+          <input type="password" id="apiKey" placeholder="sk-..." value="">
+        </div>
+
+        <div class="config-group">
+          <label>API URL</label>
+          <input type="text" id="apiUrl" value="https://api.openai.com/v1">
+        </div>
+
+        <div class="config-group">
+          <label>Model</label>
+          <select id="model">
+            <option value="gpt-4-turbo">GPT-4 Turbo</option>
+            <option value="gpt-4">GPT-4</option>
+            <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+          </select>
+        </div>
+
+        <div class="config-group">
+          <label>Position</label>
+          <select id="position">
+            <option value="bottom-right">Bottom Right (Standard)</option>
+            <option value="bottom-left">Bottom Left</option>
+            <option value="top-right">Top Right</option>
+            <option value="top-left">Top Left</option>
+          </select>
+        </div>
+
+        <div class="config-group">
+          <label>Theme</label>
+          <select id="theme">
+            <option value="dark">Dark (Standard)</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+
+        <div class="config-group">
+          <label>Custom System Prompt (Optional)</label>
+          <textarea id="systemPrompt" placeholder="You are Agentix CyberChatbot..."></textarea>
+        </div>
+
+        <div class="button-group">
+          <button class="btn btn-primary" onclick="initializeWidget()">🚀 Widget Starten</button>
+          <button class="btn btn-secondary" onclick="resetConfig()">🔄 Zurücksetzen</button>
+        </div>
+
+        <div id="status"></div>
+      </div>
+
+      <!-- Info Section -->
+      <div class="demo-section">
+        <h2>ℹ️ Information</h2>
+        
+        <div class="demo-info">
+          <strong>✓ Sicherheit</strong><br>
+          • API-Keys werden sicher behandelt<br>
+          • Keine Speicherung auf unserem Server<br>
+          • HTTPS-only Kommunikation<br>
+          <br>
+          <strong>✓ Features</strong><br>
+          • Streaming-Antworten für besseres UX<br>
+          • Markdown-Support<br>
+          • Message History<br>
+          • Dark/Light Mode<br>
+          • Responsive Design<br>
+          <br>
+          <strong>✓ Produktion</strong><br>
+          • Unter 50KB (gzipped)<br>
+          • TypeScript für Type-Safety<br>
+          • Fehlerbehandlung<br>
+          • localStorage für History
+        </div>
+
+        <h3 style="margin-top: 30px; margin-bottom: 15px; color: #667eea;">Implementierung in HTML</h3>
+        
+        <div class="code-block">
+&lt;script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/ort.min.js"&gt;&lt;/script&gt;
+&lt;script src="dist/widget.umd.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  window.initAgentixChat({
+    apiKey: 'sk-...',
+    model: 'gpt-4-turbo',
+    position: 'bottom-right',
+    theme: 'dark'
+  });
+&lt;/script&gt;
+        </div>
+      </div>
+    </div>
+
+    <!-- Code Examples -->
+    <div class="demo-section">
+      <h2>📚 Weitere Beispiele</h2>
+      
+      <h3 style="margin-top: 20px; margin-bottom: 15px; color: #667eea; font-size: 14px;">Beispiel 1: Minimal Setup</h3>
+      <div class="code-block">
+const chat = new AgentixChatWidget.ChatWidget({
+  apiKey: 'sk-...'
+});
+      </div>
+
+      <h3 style="margin-top: 20px; margin-bottom: 15px; color: #667eea; font-size: 14px;">Beispiel 2: Mit Custom Prompt</h3>
+      <div class="code-block">
+window.initAgentixChat({
+  apiKey: 'sk-...',
+  systemPrompt: 'Du bist ein Cybersecurity-Experte...',
+  theme: 'light',
+  position: 'top-left'
+});
+      </div>
+
+      <h3 style="margin-top: 20px; margin-bottom: 15px; color: #667eea; font-size: 14px;">Beispiel 3: Mit Error Handler</h3>
+      <div class="code-block">
+const chat = new AgentixChatWidget.ChatWidget({
+  apiKey: 'sk-...',
+  onError: (error) => {
+    console.error('Chat Error:', error);
+  },
+  onInit: () => {
+    console.log('Chat initialized!');
+  }
+});
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="demo-footer">
+      <p>🔒 <strong>Sicherheit & Datenschutz:</strong> Dein API-Key wird nicht gespeichert. Alle Kommunikation läuft über HTTPS zu OpenAI.</p>
+      <p style="margin-top: 20px; color: #999;">© 2024 Agentix CyberChatbot Widget • Powered by OpenAI</p>
+    </div>
+  </div>
+
+  <!-- Widget Script -->
+  <script type="module">
+    import { ChatWidget } from './src/widget.ts';
+    window.ChatWidget = ChatWidget;
+
+    // Initialize widget button
+    window.initializeWidget = function() {
+      const statusEl = document.getElementById('status');
+      
+      const apiKey = document.getElementById('apiKey').value.trim();
+      const apiUrl = document.getElementById('apiUrl').value.trim();
+      const model = document.getElementById('model').value;
+      const position = document.getElementById('position').value;
+      const theme = document.getElementById('theme').value;
+      const systemPrompt = document.getElementById('systemPrompt').value.trim();
+
+      if (!apiKey) {
+        statusEl.className = 'status error';
+        statusEl.textContent = '❌ Bitte gib deinen OpenAI API Key ein!';
+        return;
+      }
+
+      if (!apiKey.startsWith('sk-')) {
+        statusEl.className = 'status error';
+        statusEl.textContent = '❌ API Key sollte mit "sk-" beginnen!';
+        return;
+      }
+
+      try {
+        // Destroy existing widget
+        const existingContainer = document.getElementById('agentix-chat-widget');
+        if (existingContainer) {
+          existingContainer.remove();
+        }
+
+        // Create new widget
+        const config = {
+          apiKey,
+          apiUrl,
+          model,
+          position,
+          theme,
+          ...(systemPrompt && { systemPrompt }),
+          showOnLoad: false
+        };
+
+        new ChatWidget(config);
+
+        statusEl.className = 'status success';
+        statusEl.textContent = '✅ Widget erfolgreich initialisiert!';
+      } catch (error) {
+        statusEl.className = 'status error';
+        statusEl.textContent = `❌ Fehler: ${error.message}`;
+      }
+    };
+
+    window.resetConfig = function() {
+      document.getElementById('apiKey').value = '';
+      document.getElementById('apiUrl').value = 'https://api.openai.com/v1';
+      document.getElementById('model').value = 'gpt-4-turbo';
+      document.getElementById('position').value = 'bottom-right';
+      document.getElementById('theme').value = 'dark';
+      document.getElementById('systemPrompt').value = '';
+      document.getElementById('status').innerHTML = '';
+      
+      const existingContainer = document.getElementById('agentix-chat-widget');
+      if (existingContainer) {
+        existingContainer.remove();
+      }
+    };
+  </script>
+</body>
+</html>

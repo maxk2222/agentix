@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Beispiel: Agentix CyberChatbot in Production">
+  <meta name="security" content="Content-Security-Policy: default-src 'self'; script-src 'self' https://cdn.example.com; connect-src https://api.openai.com;">
+  <title>Production Integration - Agentix CyberChatbot</title>
+</head>
+<body>
+  <!-- Your Website Content -->
+  <main>
+    <h1>Willkommen auf unserer Website</h1>
+    <p>Der Chat-Bot ist in der unteren rechten Ecke verfügbar.</p>
+  </main>
+
+  <!-- ============================================
+       OPTION 1: CDN Integration (Empfohlen)
+       ============================================ -->
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/ort.min.js"></script>
+  <script src="https://cdn.example.com/agentix-chat/widget.umd.js"></script>
+  <script>
+    // Production Config
+    const chatConfig = {
+      // Variante A: Via Backend Proxy (Sicher)
+      proxyUrl: 'https://dein-backend.com/api/chat-proxy',
+      // Oder
+      // Variante B: API Key via Environment (Nur für Entwicklung)
+      // apiKey: process.env.REACT_APP_OPENAI_KEY,
+
+      // Weitere Einstellungen
+      model: 'CyberSecurityChatbot',
+      position: 'bottom-right',
+      theme: 'light',
+      width: 650,
+      height: 550,
+      showOnLoad: false,
+
+      // Error Logging
+      onError: (error) => {
+        // Nur Error-Type loggen, nicht Message-Inhalte!
+        if (window.analytics) {
+          window.analytics.trackEvent('chat_error', {
+            type: error.name,
+            message: error.message.substring(0, 50), // Gekürzt
+            timestamp: new Date().toISOString()
+          });
+        }
+      },
+
+      // Init Callback
+      onInit: () => {
+        console.log('Chat Widget initialized');
+      }
+    };
+
+    // Initialize Widget
+    if (window.initAgentixChat) {
+      window.initAgentixChat(chatConfig);
+    }
+  </script>
+
+  <!-- ============================================
+       OPTION 2: Module Integration (Modern)
+       ============================================ -->
+  <!--
+  <script type="module">
+    import { ChatWidget } from 'https://cdn.example.com/agentix-chat/widget.esm.js';
+
+    const chat = new ChatWidget({
+      proxyUrl: 'https://dein-backend.com/api/chat-proxy',
+      position: 'bottom-right',
+      theme: 'dark'
+    });
+  </script>
+  -->
+
+  <!-- ============================================
+       OPTION 3: Backend Proxy Implementation
+       ============================================ -->
+  <!--
+  // Node.js Express Backend (server.js)
+  
+  const express = require('express');
+  const axios = require('axios');
+  const app = express();
+
+  app.use(express.json());
+
+  // Rate Limiting Middleware
+  const rateLimit = require('express-rate-limit');
+  const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100 // limit each IP to 100 requests per windowMs
+  });
+
+  // Authentication Middleware
+  const authenticateRequest = (req, res, next) => {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    
+    if (!token || !isValidToken(token)) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    next();
+  };
+
+  // Chat Proxy Endpoint
+  app.post('/api/chat-proxy', limiter, authenticateRequest, async (req, res) => {
+    try {
+      const { messages, model = 'gpt-4-turbo' } = req.body;
+
+      // Validate input
+      if (!Array.isArray(messages) || messages.length === 0) {
+        return res.status(400).json({ error: 'Invalid messages' });
+      }
+
+      // Sanitize messages
+      const sanitizedMessages = messages.map(msg => ({
+        role: msg.role,
+        content: sanitizeContent(msg.content)
+      }));
+
+      // Call OpenAI API
+      const response = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        {
+          model: model,
+          messages: [
+            {
+              role: 'system',
+              content: 'You are Agentix CyberChatbot, a helpful AI assistant.'
+            },
+            ...sanitizedMessages
+          ],
+          temperature: 0.7,
+          max_tokens: 2000
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      // Log usage (für Monitoring)
+      logChatUsage({
+        user: req.user?.id,
+        model: model,
+        tokens: response.data.usage?.total_tokens,
+        timestamp: new Date()
+      });
+
+      res.json(response.data);
+    } catch (error) {
+      console.error('Chat API Error:', error);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
+  });
+
+  app.listen(3000, () => console.log('Server running on port 3000'));
+  -->
+
+  <!-- ============================================
+       OPTION 4: Environment-based Configuration
+       ============================================ -->
+  <!--
+  // .env.production
+  VITE_OPENAI_API_KEY=sk-...
+  VITE_OPENAI_MODEL=gpt-4-turbo
+  VITE_WIDGET_POSITION=bottom-right
+  VITE_WIDGET_THEME=dark
+  VITE_RATE_LIMIT=10         // Messages pro Minute
+
+  // Load from env
+  <script>
+    const config = {
+      apiKey: import.meta.env.VITE_OPENAI_API_KEY,
+      model: import.meta.env.VITE_OPENAI_MODEL,
+      position: import.meta.env.VITE_WIDGET_POSITION,
+      theme: import.meta.env.VITE_WIDGET_THEME
+    };
+
+    window.initAgentixChat(config);
+  </script>
+  -->
+
+  <!-- ============================================
+       PERFORMANCE MONITORING
+       ============================================ -->
+  <script>
+    // Optional: Performance Monitoring
+    if (window.performance && window.performance.mark) {
+      // Mark Chat Widget Load
+      performance.mark('chat-widget-start');
+      
+      // After widget loads
+      setTimeout(() => {
+        performance.mark('chat-widget-end');
+        performance.measure(
+          'chat-widget',
+          'chat-widget-start',
+          'chat-widget-end'
+        );
+
+        const measure = performance.getEntriesByName('chat-widget')[0];
+        if (window.analytics) {
+          window.analytics.trackTiming(
+            'Chat Widget Load',
+            measure.duration
+          );
+        }
+      }, 5000);
+    }
+  </script>
+
+  <!-- ============================================
+       OPTIONAL: Custom Styling
+       ============================================ -->
+  <style>
+    /* Optional: Override widget styles */
+    :root {
+      --chat-primary: #667eea;
+      --chat-secondary: #764ba2;
+      --chat-success: #10b981;
+      --chat-error: #ef4444;
+    }
+
+    /* Dark mode support */
+    @media (prefers-color-scheme: dark) {
+      .agentix-chat-widget-container {
+        --chat-bg: #1a1a2e;
+        --chat-text: #e4e4e7;
+      }
+    }
+  </style>
+
+  <!-- ============================================
+       SECURITY HEADERS (Set via server)
+       ============================================ -->
+  <!--
+  // Nginx Example
+  server {
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' https://cdn.example.com; connect-src https://api.openai.com" always;
+  }
+
+  // Apache Example
+  <IfModule mod_headers.c>
+    Header set Strict-Transport-Security "max-age=31536000"
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "DENY"
+    Header set X-XSS-Protection "1; mode=block"
+  </IfModule>
+  -->
+
+</body>
+</html>

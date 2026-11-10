@@ -1,0 +1,30 @@
+{
+  "name": "agentix-widget",
+  "version": "1.0.0",
+  "description": "Modern, secure chat widget for Agentix CyberChatbot with OpenAI integration",
+  "main": "dist/widget.js",
+  "types": "dist/widget.d.ts",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src --ext .ts,.tsx",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "marked": "^11.1.0",
+    "sanitize-html": "^2.11.0"
+  },
+  "devDependencies": {
+    "@types/sanitize-html": "^2.9.1",
+    "@vitejs/plugin-basic-ssl": "^1.0.1",
+    "esbuild": "^0.28.0",
+    "jsdom": "^24.0.0",
+    "onnxruntime-web": "^1.17.0",
+    "terser": "^5.47.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.0",
+    "vitest": "^1.6.0"
+  }
+}

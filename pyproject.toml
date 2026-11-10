@@ -1,0 +1,91 @@
+[project]
+name = "agentix"
+version = "1.0.0"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    # Core web/app stack
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.31.0",
+    "granian>=2.7,<3",
+    "orjson>=3.10,<4",
+    "PyYAML>=6.0.2",
+    "python-multipart>=0.0.12",
+    # Database
+    "psycopg[binary]>=3.2.1",
+    # LangChain (kompatible Versionen)
+    "langchain-core>=0.3.0,<0.4.0",
+    "langchain>=0.3.0,<0.4.0",
+    "langchain-community>=0.3.0,<0.4.0",
+    "langchain-openai>=0.2.0,<0.3.0",
+    "langchain-postgres==0.0.16",
+    "langchain-text-splitters>=0.3.0,<0.4.0",
+    # Tokenizer
+    "tiktoken>=0.8.0",
+    # OCR + Pillow (keine Compiler nötig)
+    "pytesseract>=0.3.13",
+    "pillow>=10.4.0",
+    "PyMuPDF>=1.24.0",
+    # Utilities
+    "requests>=2.34.2",
+    "urllib3>=2.7.0",
+    "charset-normalizer>=3.4.7",
+    "httpx>=0.27.0",
+    "croniter>=2.0.0",
+    "nest-asyncio>=1.6.0",
+    "python-dotenv>=1.0.1",
+    "pydantic-settings>=2.3.4",
+    "itsdangerous>=2.2.0",
+    "bcrypt>=4.0.0",
+    "cryptography>=42.0.0",
+    "playwright>=1.42.0",
+    "imageio-ffmpeg>=0.5.1",
+    "pypdf>=5.0",
+    "feedparser>=6.0.0",
+    "docker>=7.0",
+    "asyncssh>=2.14",
+    # MCP client layer (external tool servers, e.g. workspace-mcp) — pinned to the
+    # last stable 1.x release; the 2.x series is too new to auto-resolve.
+    "mcp==1.30.0",
+    # Tokenizers for ONNX text emotion model (SentencePiece, no PyTorch needed)
+    "tokenizers>=0.15.0",
+    # Audio (TTS/STT)
+    "faster-whisper>=1.0.0",
+    "piper-tts>=1.2.0",
+    "pydub>=0.25.0",
+    "torch>=2.0.0",
+    "torchaudio>=2.0.0",
+    "transformers>=4.40.0",
+    "pykokoro>=0.5.1",
+    "onnxruntime>=1.16.0",
+    "soundfile>=0.13.0",
+    "num2words>=0.5.12",
+    # Risky native dependencies — separate install
+    "spacy>=3.8,<3.9",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+    "de-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.8.0/de_core_news_sm-3.8.0-py3-none-any.whl",
+    "de-core-news-md @ https://github.com/explosion/spacy-models/releases/download/de_core_news_md-3.8.0/de_core_news_md-3.8.0-py3-none-any.whl",
+    "langchain-unstructured",
+    "unstructured[pdf,docx]",
+    # Office document support (.pptx, .xlsx, .odt, legacy .doc)
+    "openpyxl>=3.1.0",
+    "python-pptx>=1.0.2,<2.0",
+    "python-docx>=1.1.0,<2.0",
+    "matplotlib>=3.8.0",
+    "odfpy>=1.4.0",
+    "redis>=5.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "bandit",
+    "fakeredis>=2.26",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
+asyncio_default_test_loop_scope = "function"

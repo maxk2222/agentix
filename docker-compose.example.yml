@@ -1,0 +1,82 @@
+services:
+  postgres:
+    container_name: agentix-postgres
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${PGDATABASE:-agentix-db}
+      POSTGRES_USER: ${PGUSER:-agentix-user}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-agentix}
+    volumes:
+      - agentix-pgdata:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    networks:
+      - agentix-net
+
+  redis:
+    container_name: agentix-redis
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-devpassword}"]
+    volumes:
+      - agentix-redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    networks:
+      - agentix-net
+
+  agentix:
+    container_name: agentix
+    image: agentix:latest
+    build: .
+    env_file:
+      - .env
+    environment:
+      # Point the app at the bundled services unless .env overrides them.
+      PGHOST: ${PGHOST:-postgres}
+      PGPORT: ${PGPORT:-5432}
+      PGDATABASE: ${PGDATABASE:-agentix-db}
+      PGUSER: ${PGUSER:-agentix-user}
+      PGPASSWORD: ${PGPASSWORD:-agentix}
+      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD:-devpassword}@redis:6379/0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+      - agentix-logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Sandbox bind mounts are resolved by the HOST daemon. The host path is
+    # auto-derived from /proc/self/mountinfo for this layout; only needed in
+    # .env for non-standard mounts (see .env.example.complete):
+    #   AGENT_WORKSPACE_ROOT=/abs/path/to/data/agent_workspaces
+    #   SANDBOX_WORKSPACE_ROOT=/abs/path/to/data/sandbox_workspaces
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    networks:
+      - agentix-net
+      
+
+networks:
+  agentix-net:
+    driver: bridge
+    name: agentix-network
+
+volumes:
+  agentix-logs:
+    name: agentix-logs
+  agentix-pgdata:
+    name: agentix-pgdata
+  agentix-redisdata:
+    name: agentix-redisdata

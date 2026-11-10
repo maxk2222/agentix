@@ -1,0 +1,22 @@
+# Default assistants seeded on first start.
+# Edit via the dashboard (Configuration → Assistants) or extend this file.
+assistants:
+- name: Assistant
+  description: "A general-purpose assistant powered by your configured LLM provider.\n"
+  model: gpt-4o-mini
+  temperature: 0.4
+  collections: []
+  reasoning:
+    effort: low
+  system_instructions: "You are a helpful, friendly assistant. Answer clearly and
+    concisely, ask clarifying questions when needed, and say so when you do not
+    know something.\n\n{{current\\_datetime}}\n\n{{context}}"
+  context_window: null
+  max_output_tokens: null
+  rag_reserved_tokens: null
+  min_recent_turns: null
+  provider_id: null
+  extra_parameters: {}
+  max_iterations: null
+  max_tool_calls: null
+  max_parallel_tool_calls: null
