@@ -3815,6 +3815,19 @@ span.ws-file-name:hover {
 }
 
 @media (max-width: 640px) {
+  /* The mobile header uses overflow:hidden for the collapse animation,
+     which would clip an absolutely positioned dropdown. Fixed positioning
+     is relative to the viewport and escapes the clipping. */
+  .chat-header-menu-panel {
+    position: fixed;
+    top: 62px;
+    right: 10px;
+    max-height: calc(100dvh - 80px);
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 640px) {
   .chat-page-header {
     flex-wrap: wrap;
     gap: 10px;

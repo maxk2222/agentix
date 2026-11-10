@@ -779,6 +779,7 @@ export default function PublicChatPage() {
       } else if (now - lastHeaderToggleRef.current > 350) {
         if (delta > 12 && st > 140) {
           setHeaderCollapsed(true)
+          setHeaderMenuOpen(false)
           lastHeaderToggleRef.current = now
         } else if (delta < -12) {
           setHeaderCollapsed(false)
