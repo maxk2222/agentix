@@ -9627,6 +9627,24 @@ tr:hover .conv-copy-btn,
     border-radius: 16px;
   }
 
+  /* Public chat: header auto-collapses on scroll-down for more space */
+  .public-chat-page .chat-page-header {
+    overflow: hidden;
+    max-height: 220px;
+    transition: max-height 0.25s ease, opacity 0.2s ease,
+      margin-top 0.25s ease, padding 0.25s ease;
+  }
+
+  .public-chat-page .chat-page-header.header-collapsed {
+    max-height: 0;
+    opacity: 0;
+    margin-top: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-width: 0;
+    pointer-events: none;
+  }
+
   .chat-page-header h2 {
     font-size: 0.95rem;
   }

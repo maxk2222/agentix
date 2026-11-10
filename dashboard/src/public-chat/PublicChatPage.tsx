@@ -579,6 +579,8 @@ export default function PublicChatPage() {
   const [configError, setConfigError] = useState<string | null>(null)
 
   const [configLoaded, setConfigLoaded] = useState(false)
+  const [headerCollapsed, setHeaderCollapsed] = useState(false)
+  const lastScrollTopRef = useRef(0)
   const [title, setTitle] = useState('')
   const [subtitle, setSubtitle] = useState('')
   const [logoUrl, setLogoUrl] = useState('')
@@ -759,10 +761,22 @@ export default function PublicChatPage() {
     const container = messagesContainerRef.current
     if (!container) return
     const onScroll = () => {
-      const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100
+      const st = container.scrollTop
+      const nearBottom = container.scrollHeight - st - container.clientHeight < 100
       userScrolledUpRef.current = !nearBottom
+      // Auto-collapse the header when scrolling down (mobile gains space
+      // back automatically; the class only takes effect under 640px).
+      const delta = st - lastScrollTopRef.current
+      lastScrollTopRef.current = st
+      if (st <= 40) {
+        setHeaderCollapsed(false)
+      } else if (delta > 6) {
+        setHeaderCollapsed(true)
+      } else if (delta < -6) {
+        setHeaderCollapsed(false)
+      }
     }
-    container.addEventListener('scroll', onScroll)
+    container.addEventListener('scroll', onScroll, { passive: true })
     return () => container.removeEventListener('scroll', onScroll)
   }, [])
 
@@ -2717,7 +2731,7 @@ export default function PublicChatPage() {
   return (
     <div className="chat-page public-chat-page" data-theme={theme}>
       {/* Header */}
-      <div className="chat-page-header">
+      <div className={`chat-page-header${headerCollapsed ? ' header-collapsed' : ''}`}>
         <div className="chat-header-brand" style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
           {configLoaded && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
