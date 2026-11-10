@@ -9615,12 +9615,16 @@ tr:hover .conv-copy-btn,
 /* Mobile: < 640px */
 @media (max-width: 640px) {
   .chat-page {
+    height: 100vh;
     height: 100dvh;
+    overscroll-behavior: none;
   }
 
   .chat-page-header {
     padding: 10px 12px;
     gap: 8px;
+    margin: 8px 10px 0;
+    border-radius: 16px;
   }
 
   .chat-page-header h2 {
@@ -9712,12 +9716,13 @@ tr:hover .conv-copy-btn,
   }
 
   .chat-input-bar {
-    padding: 0 10px 12px;
+    padding: 0 10px calc(12px + env(safe-area-inset-bottom, 0px));
   }
 
   .chat-input-inner {
     padding: 6px 8px;
     gap: 8px;
+    border-radius: 18px;
   }
 
   .chat-textarea {
@@ -9878,6 +9883,31 @@ tr:hover .conv-copy-btn,
     left: 0;
     right: auto;
     font-size: 11px;
+  }
+
+  /* Touch ergonomics: remove iOS tap delay + highlight */
+  .chat-page button,
+  .chat-page a,
+  .chat-page select,
+  .chat-page textarea {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Modals respect device safe areas and dynamic viewport height */
+  .chat-history-modal-overlay,
+  .modal-overlay {
+    padding: calc(12px + env(safe-area-inset-top, 0px))
+      calc(12px + env(safe-area-inset-right, 0px))
+      calc(12px + env(safe-area-inset-bottom, 0px))
+      calc(12px + env(safe-area-inset-left, 0px));
+  }
+
+  .chat-history-modal-box,
+  .chat-history-preview-box,
+  .chat-auth-modal-box,
+  .chat-memory-modal-box {
+    max-height: 85dvh;
   }
 }
 
