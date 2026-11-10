@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import binascii
+import hashlib
 import logging
-from typing import Any, Dict, List, Optional
+import subprocess
+import tempfile
+from io import BytesIO
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 from app.public_chat_config_store import PublicChatConfigStore
@@ -316,10 +325,10 @@ async def public_chat_manifest(request: Request) -> JSONResponse:
         "background_color": "#131d2b",
         "theme_color": "#131d2b",
         "icons": [
-            {"src": "/chat/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
-            {"src": "/chat/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+            {"src": "/public-chat/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/public-chat/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
             {
-                "src": "/chat/icons/icon-maskable-512.png",
+                "src": "/public-chat/icons/icon-maskable-512.png",
                 "sizes": "512x512",
                 "type": "image/png",
                 "purpose": "maskable",
@@ -329,6 +338,156 @@ async def public_chat_manifest(request: Request) -> JSONResponse:
     return JSONResponse(
         manifest,
         media_type="application/manifest+json",
+        headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
+# PWA app-icon renderer: sizes the configured branding favicon (PNG, SVG or
+# remote URL) to the exact bitmap sizes install prompts and home screens
+# expect. Results are cached under <data_dir>/cache/pwa-icons keyed by the
+# source value, so LibreOffice is only invoked once per icon change.
+_PWA_ICON_SPECS = {
+    "icon-192.png": (192, False),
+    "icon-512.png": (512, False),
+    "apple-touch-icon.png": (180, False),
+    "icon-maskable-512.png": (512, True),
+}
+_PWA_ICON_LOCK = asyncio.Lock()
+_PWA_ICON_BG = (0x13, 0x1D, 0x2B, 0xFF)  # matches manifest background_color
+_MAX_ICON_SRC_BYTES = 8 * 1024 * 1024
+
+
+def _decode_icon_source(src: str) -> Optional[Tuple[bytes, str]]:
+    """Return (bytes, mime) for data-URL sources. None otherwise."""
+    if not src or not src.startswith("data:") or ";base64," not in src:
+        return None
+    mime = src[5 : src.index(";")].strip().lower()
+    try:
+        raw = base64.b64decode(src.split(",", 1)[1], validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if len(raw) > _MAX_ICON_SRC_BYTES:
+        return None
+    return raw, mime
+
+
+async def _fetch_icon_source(src: str) -> Optional[Tuple[bytes, str]]:
+    """Fetch http(s) icon sources server-side so remote favicons work too."""
+    if not src.lower().startswith(("http://", "https://")):
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+            resp = await client.get(src)
+            if resp.status_code != 200 or len(resp.content) > _MAX_ICON_SRC_BYTES:
+                return None
+            mime = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+            return resp.content, mime
+    except Exception:
+        return None
+
+
+def _soffice_rasterize(svg: bytes) -> Optional[bytes]:
+    """Rasterize SVG via the bundled LibreOffice (single instance via lock)."""
+    with tempfile.TemporaryDirectory(prefix="pwa-icon-") as tmp:
+        src = Path(tmp) / "icon.svg"
+        src.write_bytes(svg)
+        try:
+            proc = subprocess.run(
+                [
+                    "soffice",
+                    "--headless",
+                    "-env:UserInstallation=file:///tmp/lo-pwa-profile",
+                    "--convert-to",
+                    'png:draw_png_Export:{"PixelWidth":{"type":"long","value":1024}}',
+                    "--outdir",
+                    tmp,
+                    str(src),
+                ],
+                capture_output=True,
+                timeout=90,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        out = Path(tmp) / "icon.png"
+        if proc.returncode != 0 or not out.exists():
+            return None
+        return out.read_bytes()
+
+
+def _compose_icon(raw: bytes, size: int, maskable: bool) -> Optional[bytes]:
+    """Center the source on a square canvas and emit exact-size PNG."""
+    from PIL import Image
+
+    try:
+        im = Image.open(BytesIO(raw)).convert("RGBA")
+    except Exception:
+        return None
+    inner = int(size * 0.8) if maskable else size
+    opaque = maskable
+    canvas = Image.new("RGBA", (size, size), _PWA_ICON_BG if opaque else (0, 0, 0, 0))
+    im.thumbnail((inner, inner), Image.LANCZOS)
+    canvas.paste(im, ((size - im.width) // 2, (size - im.height) // 2), im)
+    buf = BytesIO()
+    canvas.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+@router.get("/public-chat/icons/{name}")
+async def public_chat_icon(request: Request, name: str) -> Response:
+    """Branding-aware PWA/touch icons. Falls back to the bundled static icon."""
+    spec = _PWA_ICON_SPECS.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail="Unknown icon")
+    size, maskable = spec
+
+    store = _get_public_chat_store(request)
+    defaults = (await store.get()) if store is not None else None
+    defaults = defaults or {}
+    branding_store = _get_branding_store(request)
+    branding = (await branding_store.get()) if branding_store is not None else {}
+    branding = branding or {}
+    src = defaults.get("favicon_url") or branding.get("favicon_url") or ""
+
+    app_config = _get_config(request)
+    data_dir = getattr(app_config, "data_dir", None)
+    cache_dir = Path(data_dir) / "cache" / "pwa-icons" if data_dir else None
+    cache_file = None
+    if src and cache_dir is not None:
+        key = hashlib.sha1(f"{src}|{name}".encode()).hexdigest()[:24]
+        cache_file = cache_dir / f"{key}.png"
+        if cache_file.exists():
+            return FileResponse(
+                cache_file,
+                media_type="image/png",
+                headers={"Cache-Control": "private, max-age=300"},
+            )
+
+    png: Optional[bytes] = None
+    decoded = _decode_icon_source(src) if src else None
+    if decoded is None and src:
+        decoded = await _fetch_icon_source(src)
+    if decoded is not None:
+        raw, mime = decoded
+        head = raw.lstrip()[:512].lower()
+        is_svg = "svg" in mime or head.startswith(b"<svg") or b"<svg" in head
+        if is_svg:
+            async with _PWA_ICON_LOCK:
+                raw = await asyncio.to_thread(_soffice_rasterize, raw) or b""
+        if raw:
+            png = await asyncio.to_thread(_compose_icon, raw, size, maskable)
+
+    if png is None:
+        return RedirectResponse(f"/chat/icons/{name}", status_code=307)
+
+    if cache_file is not None:
+        try:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_bytes(png)
+        except OSError:
+            cache_file = None
+    return Response(
+        content=png,
+        media_type="image/png",
         headers={"Cache-Control": "private, max-age=300"},
     )
 
