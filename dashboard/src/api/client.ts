@@ -10,11 +10,21 @@ const API_BASE = getAdminBase()
 const CACHE_TTL_MS = 60000
 const pending = new Map<string, Promise<{ body: string; status: number; headers: Record<string, string> }>>()
 const cache = new Map<string, { body: string; status: number; headers: Record<string, string>; ts: number }>()
+// Bumped by every mutation — a GET that was in-flight while a write ran must
+// not re-populate the cache with the pre-mutation body it may still carry.
+let cacheEpoch = 0
 
 async function fetchApi(url: string, options?: RequestInit): Promise<Response> {
   const method = (options?.method ?? 'GET').toUpperCase()
   const cacheable = (method === 'GET' || method === 'HEAD') && !url.includes('/admin/auth/')
   const key = `${method}:${url}:${JSON.stringify(options?.body ?? '')}`
+
+  if (!cacheable) {
+    // Any write can change arbitrary resources (config edits reshape model
+    // lists, branding, permissions, …) — drop the whole short-lived cache.
+    cacheEpoch++
+    cache.clear()
+  }
 
   if (cacheable) {
     const cached = cache.get(key)
@@ -29,6 +39,7 @@ async function fetchApi(url: string, options?: RequestInit): Promise<Response> {
     }
   }
 
+  const epoch = cacheEpoch
   const fetchPromise = fetch(url, { credentials: 'include', ...options }).then(async (res) => {
     const body = await res.text()
     return { body, status: res.status, headers: Object.fromEntries(res.headers.entries()) }
@@ -38,7 +49,7 @@ async function fetchApi(url: string, options?: RequestInit): Promise<Response> {
     pending.set(key, fetchPromise)
     fetchPromise
       .then((entry) => {
-        if (entry.status >= 200 && entry.status < 300) {
+        if (entry.status >= 200 && entry.status < 300 && epoch === cacheEpoch) {
           cache.set(key, { ...entry, ts: Date.now() })
         }
       })
