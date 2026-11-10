@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
-import { Send, Square, Bot, User, Copy, Check, Volume2, RotateCcw, Mic, Phone, PhoneOff, X, Sparkles, Smile, History, LogOut, LogIn, AlertCircle, BookOpen, KeyRound, Sun, Moon, ListPlus, Paperclip, Brain, Trash2, Pencil, Folder } from 'lucide-react'
+import { Send, Square, Bot, User, Copy, Check, Volume2, RotateCcw, Mic, Phone, PhoneOff, X, Sparkles, Smile, History, LogOut, LogIn, AlertCircle, BookOpen, KeyRound, Sun, Moon, ListPlus, Paperclip, Brain, Trash2, Pencil, Folder, EllipsisVertical } from 'lucide-react'
 import { publicAuth, publicConversations, publicKnowledge, type ChatUserInfo, type ConversationItem, type OKFConcept } from './api'
 import type { AgentTodoSnapshot, ObserverEvent, SubagentEvent, SubagentMeta } from '../api/client'
 import { SubagentModal, SubagentTagsRow, upsertSubagentEvent } from '../chat-shared/SubagentTags'
@@ -582,6 +582,8 @@ export default function PublicChatPage() {
   const [headerCollapsed, setHeaderCollapsed] = useState(false)
   const lastScrollTopRef = useRef(0)
   const lastHeaderToggleRef = useRef(0)
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false)
+  const headerMenuRef = useRef<HTMLDivElement>(null)
   const [title, setTitle] = useState('')
   const [subtitle, setSubtitle] = useState('')
   const [logoUrl, setLogoUrl] = useState('')
@@ -787,6 +789,25 @@ export default function PublicChatPage() {
     container.addEventListener('scroll', onScroll, { passive: true })
     return () => container.removeEventListener('scroll', onScroll)
   }, [])
+
+  // Close the header overflow menu on outside click / Escape.
+  useEffect(() => {
+    if (!headerMenuOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (headerMenuRef.current && !headerMenuRef.current.contains(e.target as Node)) {
+        setHeaderMenuOpen(false)
+      }
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setHeaderMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [headerMenuOpen])
 
   const copy = useCallback((id: string) => {
     setCopiedId(id)
@@ -2775,31 +2796,6 @@ export default function PublicChatPage() {
               <Folder size={16} />
             </button>
           )}
-          {cfgLanguage === 'auto' && (
-            <div className="chat-lang-switch" role="group" aria-label="Language">
-              <button
-                type="button"
-                className={language === 'de' ? 'active' : ''}
-                onClick={() => setLanguage('de')}
-              >
-                DE
-              </button>
-              <button
-                type="button"
-                className={language === 'en' ? 'active' : ''}
-                onClick={() => setLanguage('en')}
-              >
-                EN
-              </button>
-            </div>
-          )}
-          <button
-            className="chat-icon-btn"
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            title={theme === 'dark' ? t.lightMode : t.darkMode}
-          >
-            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
           {chatUser && memoryEnabled[model] && (
             <button
               className="chat-icon-btn"
@@ -2818,37 +2814,77 @@ export default function PublicChatPage() {
               <History size={16} />
             </button>
           )}
-          {chatUser ? (
-            <div className="chat-user-dropdown" style={{ position: 'relative', display: 'flex', gap: 4 }}>
-              <button
-                className="chat-user-menu-btn"
-                onClick={openPwdModal}
-                title={language === 'de' ? 'Passwort ändern' : 'Change password'}
-              >
-                <KeyRound size={14} />
-              </button>
-              <button
-                className="chat-user-menu-btn"
-                onClick={handleLogout}
-                title={t.logout}
-              >
-                <span>{chatUser.display_name || chatUser.username}</span>
-                <LogOut size={14} />
-              </button>
-            </div>
-          ) : (
-            <button
-              className="chat-login-btn"
-              onClick={() => { setAuthModalOpen(true); setAuthTab('login'); setAuthError(null) }}
-              title={t.login}
-            >
-              <LogIn size={16} />
-              <span>{t.login}</span>
-            </button>
-          )}
           <button className="chat-reset-btn" onClick={handleReset} title={t.reset}>
             <RotateCcw size={16} />
           </button>
+          <div className="chat-header-menu" ref={headerMenuRef}>
+            <button
+              className="chat-icon-btn"
+              onClick={() => setHeaderMenuOpen((v) => !v)}
+              title={language === 'de' ? 'Menü' : 'Menu'}
+              aria-expanded={headerMenuOpen}
+            >
+              <EllipsisVertical size={16} />
+            </button>
+            {headerMenuOpen && (
+              <div className="chat-header-menu-panel" role="menu">
+                {chatUser && (
+                  <div className="chat-menu-user">{chatUser.display_name || chatUser.username}</div>
+                )}
+                {cfgLanguage === 'auto' && (
+                  <div className="chat-menu-langrow" role="group" aria-label="Language">
+                    <button
+                      type="button"
+                      className={language === 'de' ? 'active' : ''}
+                      onClick={() => setLanguage('de')}
+                    >
+                      DE
+                    </button>
+                    <button
+                      type="button"
+                      className={language === 'en' ? 'active' : ''}
+                      onClick={() => setLanguage('en')}
+                    >
+                      EN
+                    </button>
+                  </div>
+                )}
+                <button
+                  className="chat-menu-item"
+                  onClick={() => { setTheme(theme === 'dark' ? 'light' : 'dark'); setHeaderMenuOpen(false) }}
+                >
+                  {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+                  <span>{theme === 'dark' ? t.lightMode : t.darkMode}</span>
+                </button>
+                {chatUser && (
+                  <button
+                    className="chat-menu-item"
+                    onClick={() => { setHeaderMenuOpen(false); openPwdModal() }}
+                  >
+                    <KeyRound size={14} />
+                    <span>{language === 'de' ? 'Passwort ändern' : 'Change password'}</span>
+                  </button>
+                )}
+                {chatUser ? (
+                  <button
+                    className="chat-menu-item"
+                    onClick={() => { setHeaderMenuOpen(false); handleLogout() }}
+                  >
+                    <LogOut size={14} />
+                    <span>{t.logout}</span>
+                  </button>
+                ) : (
+                  <button
+                    className="chat-menu-item"
+                    onClick={() => { setHeaderMenuOpen(false); setAuthModalOpen(true); setAuthTab('login'); setAuthError(null) }}
+                  >
+                    <LogIn size={14} />
+                    <span>{t.login}</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
