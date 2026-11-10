@@ -578,7 +578,8 @@ export default function PublicChatPage() {
   const [sttToast, setSttToast] = useState<string | null>(null)
   const [configError, setConfigError] = useState<string | null>(null)
 
-  const [title, setTitle] = useState('Agentix Chat Platform')
+  const [configLoaded, setConfigLoaded] = useState(false)
+  const [title, setTitle] = useState('')
   const [subtitle, setSubtitle] = useState('')
   const [logoUrl, setLogoUrl] = useState('')
   const [theme, setThemeState] = useState<'light' | 'dark'>(() => {
@@ -872,6 +873,7 @@ export default function PublicChatPage() {
     setWsEnabledMap(cfg.assistant_workspace_enabled || {})
     const enabled = cfg.enabled_assistants || []
     setAssistants(enabled)
+    setConfigLoaded(true)
     setAssistantDescriptions(cfg.assistant_descriptions || {})
     if (enabled.length === 0) return
     if (opts?.resetConversation) {
@@ -2717,13 +2719,15 @@ export default function PublicChatPage() {
       {/* Header */}
       <div className="chat-page-header">
         <div className="chat-header-brand" style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <img src={logoUrl || EMBEDDED_LOGO} alt={t.title || 'Logo'} style={{ height: 32, borderRadius: 4, display: 'block' }} />
-            <div className="chat-header-title">
-              <h2 style={{ margin: 0 }}>{title}</h2>
-              {subtitle && <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)' }}>{subtitle}</p>}
+          {configLoaded && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {logoUrl && <img src={logoUrl} alt={t.title || 'Logo'} style={{ height: 32, borderRadius: 4, display: 'block' }} />}
+              <div className="chat-header-title">
+                <h2 style={{ margin: 0 }}>{title}</h2>
+                {subtitle && <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)' }}>{subtitle}</p>}
+              </div>
             </div>
-          </div>
+          )}
         </div>
         <select
           className="chat-model-select"
