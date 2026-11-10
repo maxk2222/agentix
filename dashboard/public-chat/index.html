@@ -5,6 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>Agentix Chat</title>
     <link rel="icon" type="image/png" href="../favicon.png" />
+    <link rel="manifest" href="/public-chat/manifest.json" />
+    <meta name="theme-color" content="#131d2b" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Chat" />
+    <link rel="apple-touch-icon" href="/chat/icons/apple-touch-icon.png" />
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('/chat/sw.js', { scope: '/chat/' }).catch(function () {})
+        })
+      }
+    </script>
     <style>
       body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
     </style>

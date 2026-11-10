@@ -891,6 +891,8 @@ export default function PublicChatPage() {
     if (effectiveTitle) setTitle(effectiveTitle)
     if (cfg.subtitle || brand.powered_by) setSubtitle(cfg.subtitle || brand.powered_by)
     document.title = effectiveTitle || 'Agentix Chat'
+    const appleTitle = document.querySelector("meta[name='apple-mobile-web-app-title']")
+    if (appleTitle && effectiveTitle) appleTitle.setAttribute('content', effectiveTitle)
     setLogoUrl(cfg.logo_url || brand.logo_url || EMBEDDED_LOGO)
     const faviconHref = cfg.favicon_url || brand.favicon_url || EMBEDDED_FAVICON
     let link = document.querySelector("link[rel~='icon']") as HTMLLinkElement | null

@@ -6,6 +6,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.public_chat_config_store import PublicChatConfigStore
@@ -290,6 +291,46 @@ async def public_chat_config_get(
             if branding.get(key)
         }
     return result
+
+
+@router.get("/public-chat/manifest.json")
+async def public_chat_manifest(request: Request) -> JSONResponse:
+    """PWA manifest for the public chat. Built dynamically so the installed
+    app carries the configured platform name and icon."""
+    store = _get_public_chat_store(request)
+    defaults = (await store.get()) if store is not None else None
+    defaults = defaults or {}
+    branding_store = _get_branding_store(request)
+    branding = (await branding_store.get()) if branding_store is not None else {}
+    branding = branding or {}
+
+    name = defaults.get("title") or branding.get("app_name") or "Chat"
+    description = defaults.get("subtitle") or branding.get("powered_by") or name
+    manifest = {
+        "name": name,
+        "short_name": name,
+        "description": description,
+        "start_url": "/chat/",
+        "scope": "/chat/",
+        "display": "standalone",
+        "background_color": "#131d2b",
+        "theme_color": "#131d2b",
+        "icons": [
+            {"src": "/chat/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/chat/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+            {
+                "src": "/chat/icons/icon-maskable-512.png",
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "maskable",
+            },
+        ],
+    }
+    return JSONResponse(
+        manifest,
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 @router.post("/admin/public-chat/config")
