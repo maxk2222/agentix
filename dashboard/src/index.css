@@ -660,6 +660,12 @@ span.model-chip {
   background: var(--accent-light);
 }
 
+/* saved model no longer present in the options list — still removable */
+.model-chip.stale {
+  border-style: dashed;
+  opacity: 0.65;
+}
+
 .domain-chip {
   display: inline-flex;
   align-items: center;

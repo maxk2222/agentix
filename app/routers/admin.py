@@ -4568,6 +4568,19 @@ async def delete_user(request: Request, user_id: str) -> Dict[str, Any]:
             raise HTTPException(status_code=400, detail="Cannot delete the last owner")
 
     await store.delete_user(user_id)
+
+    # A linked public-chat identity must not outlive the dashboard account —
+    # it would keep logging in with its own stored password.
+    chat_store = getattr(request.app.state, "_chat_user_store", None)
+    if chat_store is not None:
+        try:
+            linked = await chat_store.get_by_dashboard_user_id(user_id)
+            if linked is not None:
+                await _purge_chat_user(request, linked.id)
+        except Exception:
+            logger.exception(
+                "Linked chat user purge failed for dashboard user %s", user_id
+            )
     return {"success": True}
 
 
@@ -4821,9 +4834,50 @@ async def reset_chat_user_password(
     return {"success": True}
 
 
+async def _purge_chat_user(request: Request, chat_user_id: str) -> None:
+    """Delete a chat user plus everything they own.
+
+    Removes every conversation the user is linked to (link row, artifacts,
+    uploads, agent memory, sandbox, workspace dirs AND the message content
+    itself), then the ``chat_users`` row — group memberships cascade via FK.
+    """
+    app_state = request.app.state
+    conv_store = getattr(app_state, "_chat_conversations_store", None)
+    if conv_store is not None:
+        try:
+            links = await conv_store.list_for_user(chat_user_id)
+        except Exception:
+            logger.exception("Conversation link lookup failed for %s", chat_user_id)
+            links = []
+        rag_app = getattr(app_state, "rag_application", None)
+        engine = getattr(rag_app, "engine", None) or getattr(rag_app, "_engine", None)
+        from app.conversation_cleanup import cleanup_conversation_data
+        from sqlalchemy import text as sa_text
+
+        for link in links:
+            cid = link.get("conversation_id")
+            if not cid:
+                continue
+            await cleanup_conversation_data(app_state, cid)
+            if engine is not None:
+                try:
+                    async with engine.begin() as conn:
+                        await conn.execute(
+                            sa_text(
+                                "DELETE FROM messages WHERE conversation_id = :c"
+                            ),
+                            {"c": cid},
+                        )
+                except Exception:
+                    logger.exception("Message purge failed for %s", cid)
+    store = getattr(app_state, "_chat_user_store", None)
+    if store is not None:
+        await store.delete_user(chat_user_id)
+
+
 @router.delete("/chat-users/{user_id}")
 async def delete_chat_user(request: Request, user_id: str) -> Dict[str, Any]:
-    """Delete a public chat user."""
+    """Delete a public chat user and all their data."""
     await require_permission(request, "users:write")
     store = getattr(request.app.state, "_chat_user_store", None)
     if store is None:
@@ -4833,7 +4887,7 @@ async def delete_chat_user(request: Request, user_id: str) -> Dict[str, Any]:
     if user is None:
         raise HTTPException(status_code=404, detail="Chat user not found")
 
-    await store.delete_user(user_id)
+    await _purge_chat_user(request, user_id)
     return {"success": True}
 
 

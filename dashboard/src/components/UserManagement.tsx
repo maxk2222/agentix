@@ -809,17 +809,18 @@ export default function UserManagement() {
                   </div>
                   {!groupForm.unrestricted && (
                     <div className="group-chip-area">
-                      {modelOptions.map((name) => (
+                      {[...new Set([...modelOptions, ...groupForm.allowed_models])].map((name) => (
                         <button
                           key={name}
                           type="button"
-                          className={`model-chip ${groupForm.allowed_models.includes(name) ? 'active' : ''}`}
+                          className={`model-chip ${groupForm.allowed_models.includes(name) ? 'active' : ''} ${modelOptions.includes(name) ? '' : 'stale'}`}
+                          title={modelOptions.includes(name) ? undefined : $t('userMgmt.modelUnavailable')}
                           onClick={() => toggleGroupModel(name)}
                         >
                           {name}
                         </button>
                       ))}
-                      {modelOptions.length === 0 && <span className="text-muted">{$t('userMgmt.noModels')}</span>}
+                      {modelOptions.length === 0 && groupForm.allowed_models.length === 0 && <span className="text-muted">{$t('userMgmt.noModels')}</span>}
                     </div>
                   )}
                 </div>
