@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Edit3 } from 'lucide-react'
 
 /**
@@ -45,7 +46,10 @@ export default function PromptModal({
     if (v) onSubmit(v)
   }
 
-  return (
+  // Portal to <body>: ancestors with overflow:hidden, backdrop-filter or a
+  // transform (e.g. the floating workspace panel) would otherwise clip the
+  // fixed overlay to their own box.
+  return createPortal(
     <div className="modal-overlay" onClick={onCancel}>
       <div className="modal-box confirm-modal" onClick={(e) => e.stopPropagation()}>
         <div className="confirm-icon">
@@ -77,6 +81,7 @@ export default function PromptModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

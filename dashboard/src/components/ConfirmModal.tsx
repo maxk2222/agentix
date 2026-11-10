@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { AlertTriangle } from 'lucide-react'
 import { useAppPreferences } from '../ui/AppPreferences'
 import { useT } from '../i18n'
@@ -26,7 +27,9 @@ export default function ConfirmModal({
 
   if (!open) return null
 
-  return (
+  // Portal to <body>: clipped/filtered/transformed ancestors (e.g. the
+  // floating workspace panel) would otherwise cut off the fixed overlay.
+  return createPortal(
     <div className="modal-overlay" onClick={confirmDisabled ? undefined : onCancel}>
       <div className="modal-box confirm-modal" onClick={(e) => e.stopPropagation()}>
         <div className="confirm-icon">
@@ -43,6 +46,7 @@ export default function ConfirmModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

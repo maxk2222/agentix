@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { Info } from 'lucide-react'
 
 /**
@@ -23,7 +24,9 @@ export default function AlertModal({
 }) {
   if (!open) return null
 
-  return (
+  // Portal to <body>: clipped/filtered/transformed ancestors (e.g. the
+  // floating workspace panel) would otherwise cut off the fixed overlay.
+  return createPortal(
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box confirm-modal" onClick={(e) => e.stopPropagation()}>
         <div className="confirm-icon" style={danger ? { color: 'var(--danger)' } : undefined}>
@@ -42,6 +45,7 @@ export default function AlertModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
