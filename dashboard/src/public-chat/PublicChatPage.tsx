@@ -581,6 +581,7 @@ export default function PublicChatPage() {
   const [configLoaded, setConfigLoaded] = useState(false)
   const [headerCollapsed, setHeaderCollapsed] = useState(false)
   const lastScrollTopRef = useRef(0)
+  const lastHeaderToggleRef = useRef(0)
   const [title, setTitle] = useState('')
   const [subtitle, setSubtitle] = useState('')
   const [logoUrl, setLogoUrl] = useState('')
@@ -766,14 +767,21 @@ export default function PublicChatPage() {
       userScrolledUpRef.current = !nearBottom
       // Auto-collapse the header when scrolling down (mobile gains space
       // back automatically; the class only takes effect under 640px).
+      // Large deltas + cooldown prevent flicker from momentum bounce,
+      // iOS rubber-banding and streaming auto-scroll pushes.
       const delta = st - lastScrollTopRef.current
       lastScrollTopRef.current = st
+      const now = Date.now()
       if (st <= 40) {
         setHeaderCollapsed(false)
-      } else if (delta > 6) {
-        setHeaderCollapsed(true)
-      } else if (delta < -6) {
-        setHeaderCollapsed(false)
+      } else if (now - lastHeaderToggleRef.current > 350) {
+        if (delta > 12 && st > 140) {
+          setHeaderCollapsed(true)
+          lastHeaderToggleRef.current = now
+        } else if (delta < -12) {
+          setHeaderCollapsed(false)
+          lastHeaderToggleRef.current = now
+        }
       }
     }
     container.addEventListener('scroll', onScroll, { passive: true })
