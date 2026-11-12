@@ -295,12 +295,13 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             total_bytes = 0
 
             async for chunk in iterator:
-                chunk_bytes = chunk or b""
-                chunk_count += 1
-                total_bytes += len(chunk_bytes)
+                if isinstance(chunk, (bytes, bytearray, memoryview)):
+                    chunk_bytes = bytes(chunk)
+                    chunk_count += 1
+                    total_bytes += len(chunk_bytes)
 
-                if not is_streaming:
-                    body_chunks.append(chunk_bytes)
+                    if not is_streaming:
+                        body_chunks.append(chunk_bytes)
 
                 yield chunk
 
