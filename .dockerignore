@@ -22,3 +22,8 @@ logs/
 .vscode/
 .DS_Store
 **/node_modules/
+
+# Frontend build output is produced inside the image (frontend stage) —
+# committed dist trees would only bloat the build context.
+dashboard/dist/
+widget/dist/

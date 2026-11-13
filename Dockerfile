@@ -10,6 +10,20 @@ COPY pyproject.toml uv.lock ./
 RUN pip install --no-cache-dir "uv~=0.13.0" \
     && uv export --locked --no-dev --format requirements-txt -o /deps.txt
 
+# Frontend assets are compiled inside the image so a clean checkout builds
+# without committed dist/ trees. Runs on the build platform — vite output is
+# arch-independent, so QEMU never touches it.
+FROM --platform=$BUILDPLATFORM node:20-slim AS frontend
+WORKDIR /fe
+COPY dashboard/package.json dashboard/package-lock.json ./dashboard/
+COPY widget/package.json widget/package-lock.json ./widget/
+RUN cd dashboard && npm ci --no-audit --no-fund \
+    && cd /fe/widget && npm ci --no-audit --no-fund
+COPY dashboard/ ./dashboard/
+COPY widget/ ./widget/
+RUN cd dashboard && npm run build \
+    && cd /fe/widget && npm run build
+
 FROM python:3.11-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
@@ -113,8 +127,8 @@ ENV HOME=/home/appuser
 COPY --chown=appuser:appuser app ./app
 COPY --chown=appuser:appuser agent ./agent
 COPY --chown=appuser:appuser defaults ./defaults
-COPY --chown=appuser:appuser widget/dist ./widget/dist
-COPY --chown=appuser:appuser dashboard/dist ./dashboard/dist
+COPY --chown=appuser:appuser --from=frontend /fe/widget/dist ./widget/dist
+COPY --chown=appuser:appuser --from=frontend /fe/dashboard/dist ./dashboard/dist
 
 USER appuser
 
