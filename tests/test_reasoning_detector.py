@@ -150,6 +150,7 @@ async def test_ensure_detected_cache_and_schedule() -> None:
         id = "p1"
         base_url = "http://test"
         timeout_seconds = 30
+        enabled = True
 
     class FakeStore:
         def __init__(self) -> None:

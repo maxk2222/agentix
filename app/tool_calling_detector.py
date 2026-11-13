@@ -59,6 +59,7 @@ async def detect_tool_calling_support(
     api_key: Optional[str] = None,
     model: str,
     timeout: float = 30.0,
+    extra_headers: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Send a probe chat completion with tools and analyse the response.
 
@@ -71,6 +72,8 @@ async def detect_tool_calling_support(
     """
     url = base_url.rstrip("/") + "/v1/chat/completions"
     headers: Dict[str, str] = {"Content-Type": "application/json"}
+    if extra_headers:
+        headers.update(extra_headers)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
@@ -156,7 +159,7 @@ async def ensure_detected_for_provider(
 
     store: LLMProviderStore = provider_store
     provider = await store.get_provider(provider_id)
-    if provider is None:
+    if provider is None or not getattr(provider, "enabled", True):
         return None
 
     # Check per-model cache first
@@ -185,6 +188,7 @@ async def _run_detection(
         api_key=api_key,
         model=model,
         timeout=float(provider.timeout_seconds),
+        extra_headers=getattr(provider, "extra_headers", None),
     )
     await store.update_model_tool_calling_status(
         provider_id=provider.id,

@@ -44,7 +44,8 @@ class CustomOpenAICompatibleEmbeddings(Embeddings):
         if endpoint:
             self.endpoint = endpoint
         else:
-            base = os.getenv("LLM_API_URL", "http://127.0.0.1:5001").rstrip("/")
+            from app.llm_providers import normalize_base_url
+            base = normalize_base_url(os.getenv("LLM_API_URL", "http://127.0.0.1:5001"))
             self.endpoint = f"{base}/v1/embeddings"
         self.model = model
         self.api_key = api_key

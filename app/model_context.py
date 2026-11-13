@@ -13,6 +13,8 @@ from typing import Any, Dict, Mapping, Optional
 
 import httpx
 
+from app.llm_providers import normalize_base_url
+
 logger = logging.getLogger(__name__)
 
 # Ordered (substring, context_window) rules — first match wins, so more
@@ -70,7 +72,7 @@ async def get_provider_context_windows(config: Any) -> Dict[str, int]:
     each model object; OpenAI does not (returns an empty map). Results are
     cached per base URL for ``_PROVIDER_TTL_SECONDS``.
     """
-    base = getattr(config, "llm_api_base", "") or ""
+    base = normalize_base_url(getattr(config, "llm_api_base", "") or "")
     if not base:
         return {}
     now = time.monotonic()

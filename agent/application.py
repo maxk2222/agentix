@@ -13,7 +13,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Sequence
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Sequence, Tuple
 
 from langchain.schema import Document
 from langchain_core.messages import BaseMessage, HumanMessage
@@ -154,8 +154,10 @@ class RAGApplication:
         self._instructions_mtime = 0.0
         self._instructions_store: Optional[Any] = None
         self._instructions_db_version_id = 0
-        self._provider_model_cache: Dict[str, Tuple[str, str, Optional[str]]] = {}
+        self._provider_model_cache: Dict[str, str] = {}
         self._provider_cache_lock = asyncio.Lock()
+        self._provider_refresh_task: Optional[asyncio.Task] = None
+        self._provider_refresh_requested = False
         self.config.bootstrap_default_runtime_data()
         try:
             initial_instructions = self._load_instructions(self.config.instructions_file)
@@ -249,8 +251,9 @@ class RAGApplication:
 
         def _factory() -> Any:
             from langchain_openai import ChatOpenAI
+            from app.llm_providers import normalize_base_url
             return ChatOpenAI(
-                base_url=f"{api_base}/v1",
+                base_url=f"{normalize_base_url(api_base)}/v1",
                 api_key=(api_key or "none"),
                 model=model,
                 temperature=0.0,
@@ -483,10 +486,11 @@ class RAGApplication:
         # Resolve the API key for the configured embedding provider
         if self._provider_store and self.config.embeddings_api_url:
             try:
-                url = str(self.config.embeddings_api_url).rstrip("/")
+                from app.llm_providers import normalize_base_url
+                url = normalize_base_url(self.config.embeddings_api_url)
                 provider = None
                 for p in await self._provider_store.list_providers():
-                    if str(p.base_url).rstrip("/") == url:
+                    if normalize_base_url(p.base_url) == url:
                         provider = p
                         break
                 if provider is not None:
@@ -821,6 +825,14 @@ class RAGApplication:
 
     async def shutdown(self) -> None:
         """Dispose embeddings, chain state and sandbox containers so the instance can be re-used later."""
+        refresh_task = getattr(self, "_provider_refresh_task", None)
+        if refresh_task is not None and not refresh_task.done():
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._provider_refresh_task = None
         try:
             from agent.tools.docker_sandbox import ConversationSandboxManager
             await ConversationSandboxManager().destroy_all()
@@ -1473,7 +1485,14 @@ class RAGApplication:
         return await self._instructions_store.get_current_version_id()
 
     async def refresh_provider_model_cache(self) -> None:
-        """Query all enabled providers for their model lists and cache the mappings."""
+        """Rebuild the ``model -> provider_id`` membership map.
+
+        The map deliberately stores *membership only* — endpoint details
+        (URL, key, headers, timeouts) are resolved fresh per request, so
+        admin edits take effect without waiting for this refresh. A refresh
+        is only needed when model lists change (provider added/deleted,
+        enabled toggled, upstream catalog changed).
+        """
         if self._provider_store is None:
             return
         try:
@@ -1481,20 +1500,57 @@ class RAGApplication:
         except Exception:
             logger.warning("Failed to list providers for model cache refresh", exc_info=True)
             return
-        cache: Dict[str, Tuple[str, str, Optional[str]]] = {}
+        from app.llm_providers import build_provider_model_map
+
+        previous = self._provider_model_cache
+        models_by_provider: Dict[str, List[str]] = {}
         for provider in providers:
             try:
                 models = await self._provider_store.fetch_models(provider.id)
-                api_key = await self._provider_store.get_api_key(provider.id)
-                for model_name in models:
-                    cache[model_name] = (provider.id, provider.base_url, api_key)
             except Exception:
                 logger.warning("Failed to fetch models from provider %s", provider.id, exc_info=True)
+                models = None
+            if models is None:
+                # A transient fetch failure must not silently unroute every
+                # model of that provider — preserve the previous membership.
+                models = [m for m, pid in previous.items() if pid == provider.id]
+            models_by_provider[provider.id] = models
+        cache = build_provider_model_map(providers, models_by_provider)
         async with self._provider_cache_lock:
             self._provider_model_cache = cache
         if self._chain_builder is not None:
             self._chain_builder.set_provider_model_cache(cache)
         logger.info("Provider model cache refreshed with %d model mappings.", len(cache))
+
+    def schedule_provider_model_refresh(self) -> None:
+        """Schedule a coalesced background membership refresh.
+
+        Called fire-and-forget by admin mutations — provider edits already
+        propagate instantly via fresh endpoint resolution; this rebuild only
+        keeps the ``model -> provider_id`` membership map current without
+        blocking the admin request on upstream ``/models`` fetches.
+        """
+        if self._provider_store is None:
+            return
+        self._provider_refresh_requested = True
+        task = getattr(self, "_provider_refresh_task", None)
+        if task is None or task.done():
+            try:
+                self._provider_refresh_task = asyncio.create_task(
+                    self._provider_refresh_worker()
+                )
+            except RuntimeError:
+                self._provider_refresh_task = None
+                logger.debug("No running event loop; provider model refresh deferred")
+
+    async def _provider_refresh_worker(self) -> None:
+        """Drain pending refresh requests; mutations during a run re-arm once."""
+        while self._provider_refresh_requested:
+            self._provider_refresh_requested = False
+            try:
+                await self.refresh_provider_model_cache()
+            except Exception:
+                logger.warning("Scheduled provider model refresh failed", exc_info=True)
 
     async def refresh_instructions_if_needed(self) -> bool:
         """Reload assistant instructions when the DB version or backing file changes."""
@@ -1578,10 +1634,10 @@ class RAGApplication:
         if self._provider_store is None:
             return
         seen_providers: Dict[str, str] = {}  # provider_id -> model_name
-        for assistant_name, entry in self.instructions.items():
-            provider_id, model_name = self._resolve_provider_for_assistant_entry(entry)
-            if provider_id and model_name and provider_id not in seen_providers:
-                seen_providers[provider_id] = model_name
+        for assistant_name in self.instructions:
+            provider, model_name = await self._resolve_serving_provider(assistant_name)
+            if provider is not None and model_name and provider.id not in seen_providers:
+                seen_providers[provider.id] = model_name
         for provider_id, model_name in seen_providers.items():
             try:
                 from app.tool_calling_detector import ensure_detected_for_provider
@@ -1590,6 +1646,51 @@ class RAGApplication:
                 )
             except Exception:
                 logger.debug("Failed to start detection for provider %s", provider_id, exc_info=True)
+
+    async def _enabled_provider(self, provider_id: Optional[str]) -> Optional[Any]:
+        """Fetch a provider that may receive traffic — None when missing/disabled."""
+        if not provider_id or self._provider_store is None:
+            return None
+        try:
+            provider = await self._provider_store.get_provider(provider_id)
+        except Exception:
+            logger.exception("Failed to fetch provider %s", provider_id)
+            return None
+        return provider if provider is not None and provider.enabled else None
+
+    async def _resolve_serving_provider(
+        self, model_name: str
+    ) -> Tuple[Optional[Any], Optional[str]]:
+        """Resolve the provider that will actually serve *model_name*.
+
+        Mirrors ``ChainBuilder._resolve_provider_endpoint``: explicit pin →
+        refreshed membership map → enabled default provider, skipping
+        disabled/deleted providers at every stage. ``model_name`` is the
+        assistant name; the returned model is the upstream (wire) model id —
+        capability hints and detection must describe the same target the
+        request will actually hit.
+        """
+        if self._provider_store is None:
+            return None, None
+        entry = self.instructions.get(model_name, {})
+        explicit_id, resolved_model = self._resolve_provider_for_assistant_entry(entry)
+        provider = await self._enabled_provider(explicit_id)
+        if provider is not None:
+            return provider, resolved_model
+        wire_model = resolved_model or model_name
+        cached_id = self._provider_model_cache.get(wire_model)
+        if cached_id and cached_id != explicit_id:
+            provider = await self._enabled_provider(cached_id)
+            if provider is not None:
+                return provider, wire_model
+        try:
+            default_provider = await self._provider_store.get_default_provider()
+        except Exception:
+            logger.exception("Failed to fetch default provider")
+            default_provider = None
+        if default_provider is not None and default_provider.enabled:
+            return default_provider, wire_model
+        return None, None
 
     def _resolve_provider_for_assistant_entry(
         self, entry: Dict[str, Any]
@@ -1600,28 +1701,19 @@ class RAGApplication:
         if provider_id:
             return provider_id, model_name
         if model_name and self._provider_model_cache:
-            cached = self._provider_model_cache.get(model_name)
-            if cached:
-                cached_provider_id = cached[0]
+            cached_provider_id = self._provider_model_cache.get(model_name)
+            if cached_provider_id:
                 return cached_provider_id, model_name
         return None, model_name
 
     async def _get_provider_tool_calling_hint(self, model_name: str) -> Optional[bool]:
         """Return cached tool-calling support for the provider+model backing *model_name*."""
-        if self._provider_store is None:
-            logger.debug("No provider store available, tool calling hint = None")
-            return None
-        assistant_entry = self.instructions.get(model_name, {})
-        provider_id, resolved_model = self._resolve_provider_for_assistant_entry(assistant_entry)
-        if not provider_id:
-            logger.debug("No provider_id resolved for %s, tool calling hint = None", model_name)
-            return None
-        provider = await self._provider_store.get_provider(provider_id)
+        provider, resolved = await self._resolve_serving_provider(model_name)
         if provider is None:
-            logger.debug("Provider %s not found, tool calling hint = None", provider_id)
+            logger.debug("No provider resolved for %s, tool calling hint = None", model_name)
             return None
+        provider_id = provider.id
         # Per-model lookup first, then legacy provider-wide fallback
-        resolved = resolved_model or model_name
         hint = await self._provider_store.get_model_tool_calling_status(provider_id, resolved)
         if hint is None:
             hint = provider.supports_native_tool_calls

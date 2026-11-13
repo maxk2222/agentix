@@ -39,6 +39,7 @@ from app.reasoning_params import (
     normalize_reasoning_dict,
     probe_overrides_family,
 )
+from app.llm_providers import normalize_base_url
 from app.messages import MessageStore
 from app.stores import AgentMemoryStore, InstructionsStore, RawFileStore
 from app.webdav_store import WebDAVFileMetaStore, WebDAVSourceStore
@@ -2620,6 +2621,22 @@ def _get_provider_store(request: Request):
     return store
 
 
+def _schedule_provider_model_refresh(request: Request) -> None:
+    """Kick a background rebuild of the model->provider membership map.
+
+    Fire-and-forget: the refresh does a ``/v1/models`` fetch per provider
+    and must never block the admin request. Endpoint details (URL, key,
+    headers, timeouts) propagate without it — only membership needs it.
+    """
+    rag = getattr(request.app.state, "rag_application", None)
+    schedule = getattr(rag, "schedule_provider_model_refresh", None)
+    if callable(schedule):
+        try:
+            schedule()
+        except Exception:
+            logger.debug("Could not schedule provider model refresh", exc_info=True)
+
+
 def _get_api_key_store(request: Request):
     store = getattr(request.app.state, "_api_key_store", None)
     if store is None:
@@ -3868,6 +3885,7 @@ async def create_provider(request: Request, payload: ProviderPayload) -> dict:
         supports_native_tool_calls=payload.supports_native_tool_calls,
     )
     await store.create_provider(provider)
+    _schedule_provider_model_refresh(request)
     return {"success": True}
 
 
@@ -3897,6 +3915,7 @@ async def update_provider(request: Request, provider_id: str, payload: ProviderP
         supports_native_tool_calls=payload.supports_native_tool_calls,
     )
     await store.update_provider(provider)
+    _schedule_provider_model_refresh(request)
     return {"success": True}
 
 
@@ -3909,6 +3928,7 @@ async def delete_provider(request: Request, provider_id: str) -> dict:
     if existing is None:
         raise HTTPException(status_code=404, detail="Provider not found")
     await store.delete_provider(provider_id)
+    _schedule_provider_model_refresh(request)
     return {"success": True}
 
 
@@ -3923,6 +3943,7 @@ async def rotate_provider_secret(
     if existing is None:
         raise HTTPException(status_code=404, detail="Provider not found")
     await store.rotate_api_key(provider_id, payload.api_key)
+    _schedule_provider_model_refresh(request)
     return {"success": True}
 
 
@@ -3935,7 +3956,7 @@ async def check_provider(request: Request, provider_id: str) -> dict:
     if provider is None:
         raise HTTPException(status_code=404, detail="Provider not found")
     api_key = await store.get_api_key(provider_id)
-    headers = {}
+    headers = dict(provider.extra_headers or {})
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     try:
@@ -3975,6 +3996,7 @@ async def detect_provider_tool_calling(request: Request, provider_id: str, paylo
         api_key=api_key,
         model=model,
         timeout=float(provider.timeout_seconds),
+        extra_headers=provider.extra_headers,
     )
     await store.update_tool_calling_status(
         provider_id=provider_id,
@@ -4013,6 +4035,7 @@ async def detect_provider_reasoning(request: Request, provider_id: str, payload:
         api_key=api_key,
         model=model,
         timeout=float(provider.timeout_seconds),
+        extra_headers=provider.extra_headers,
     )
     persistable = (
         result.get("supports_effort") is not None
@@ -4082,7 +4105,7 @@ async def config_models(request: Request) -> List[str]:
         cfg = getattr(request.app.state, "app_config", None)
         if cfg is None:
             raise HTTPException(status_code=503, detail="App config not available")
-        base = cfg.llm_api_base
+        base = normalize_base_url(cfg.llm_api_base)
         api_key = cfg.llm_api_key
         headers = {}
         if api_key:
@@ -4101,7 +4124,7 @@ async def config_models(request: Request) -> List[str]:
     all_models: set[str] = set()
     for provider in providers:
         api_key = await store.get_api_key(provider.id)
-        headers = {}
+        headers = dict(provider.extra_headers or {})
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         try:
@@ -4126,7 +4149,7 @@ async def config_provider_models(request: Request) -> Dict[str, Dict[str, Any]]:
 
     for provider in providers:
         api_key = await store.get_api_key(provider.id)
-        headers = {}
+        headers = dict(provider.extra_headers or {})
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         try:
@@ -4148,7 +4171,7 @@ async def config_provider_models(request: Request) -> Dict[str, Dict[str, Any]]:
             headers["Authorization"] = f"Bearer {api_key}"
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(f"{cfg.llm_api_base}/v1/models", headers=headers)
+                resp = await client.get(f"{normalize_base_url(cfg.llm_api_base)}/v1/models", headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
                 models = [m["id"] for m in data.get("data", []) if "id" in m]
@@ -4196,6 +4219,7 @@ async def import_providers(request: Request, payload: ProviderPayload) -> dict:
             await store.update_provider(provider)
         else:
             await store.create_provider(provider)
+    _schedule_provider_model_refresh(request)
     return {"success": True}
 
 

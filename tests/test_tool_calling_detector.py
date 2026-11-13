@@ -225,6 +225,7 @@ async def test_ensure_detected_uses_per_model_cache() -> None:
             self.base_url = "http://test"
             self.timeout_seconds = 30
             self.supports_native_tool_calls = None
+            self.enabled = True
 
     class FakeStore:
         def __init__(self) -> None:

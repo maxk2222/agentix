@@ -6,7 +6,7 @@ import asyncio
 import copy
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from langchain.chains import create_history_aware_retriever
 from langchain_core.messages import SystemMessage
@@ -17,6 +17,11 @@ from agent.custom_llm import ChatOpenAIWithReasoning
 from agent.agent_llm import ChatOpenAIAgentLLM
 
 from app.chat_utils import extract_answer_text, extract_reasoning_text, render_system_instructions
+from app.llm_providers import (
+    ProviderEndpoint,
+    build_provider_endpoint,
+    normalize_base_url,
+)
 from app.reasoning_params import (
     deep_merge_extra_body,
     match_family,
@@ -46,13 +51,15 @@ class ChainBuilder:
         self._llm_cache: Dict[Tuple[Any, ...], ChatOpenAIWithReasoning] = {}
         self._agent_llm_cache: Dict[Tuple[Any, ...], ChatOpenAIAgentLLM] = {}
         self._cache_lock = asyncio.Lock()
-        self._provider_model_cache: Dict[str, Tuple[str, str, Optional[str]]] = {}
-        """model_name -> (provider_id, base_url, api_key)"""
+        self._provider_model_cache: Dict[str, str] = {}
+        """model_name -> provider_id (membership only — endpoints resolve fresh)"""
+        self._warned_providers: set = set()
+        """provider_ids already logged as unroutable — dedup per-request warnings"""
 
     def set_provider_store(self, store: Any) -> None:
         self._provider_store = store
 
-    def set_provider_model_cache(self, cache: Dict[str, Tuple[str, str, Optional[str]]]) -> None:
+    def set_provider_model_cache(self, cache: Dict[str, str]) -> None:
         self._provider_model_cache = cache
 
     async def clear_cache(self) -> None:
@@ -269,80 +276,92 @@ class ChainBuilder:
 
     async def _resolve_provider_endpoint(
         self, model_name: str, provider_id: Optional[str], *, label: str = ""
-    ) -> Tuple[str, str]:
-        """Resolve ``(base_url, api_key)`` for a model via the provider store.
+    ) -> ProviderEndpoint:
+        """Resolve the wire endpoint for a model via the provider store.
 
-        Lookup order: explicit ``provider_id`` → per-model provider cache →
+        Lookup order: explicit ``provider_id`` → per-model membership map →
         default provider → ``config.llm_api_base``/``llm_api_key`` fallback.
+        The endpoint is resolved *fresh* on every call — URL, key, header,
+        timeout and retry edits take effect immediately without a cache
+        refresh. Disabled or deleted providers are skipped so they can never
+        keep receiving traffic.
         """
-        llm_base_url = f"{self.config.llm_api_base}/v1"
-        upstream_key = (self.config.llm_api_key or "").strip() or "none"
+        env_endpoint = ProviderEndpoint(
+            provider_id=None,
+            base_url=f"{normalize_base_url(self.config.llm_api_base)}/v1",
+            api_key=(self.config.llm_api_key or "").strip() or "none",
+        )
         if self._provider_store is None:
-            return llm_base_url, upstream_key
-        provider_found = False
+            return env_endpoint
         tag = f"{label} " if label else ""
         if provider_id:
-            try:
-                provider = await self._provider_store.get_provider(provider_id)
-                if provider:
-                    llm_base_url = f"{provider.base_url}/v1"
-                    api_key = await self._provider_store.get_api_key(provider.id)
-                    if api_key:
-                        upstream_key = api_key
-                    provider_found = True
-                    logger.debug("Routing %smodel '%s' to explicit provider '%s'", tag, model_name, provider_id)
-            except Exception:
-                logger.debug("Failed to look up explicit provider '%s' for %smodel '%s'", provider_id, tag, model_name, exc_info=True)
-        if not provider_found:
-            cached = self._provider_model_cache.get(model_name)
-            if cached:
-                cached_provider_id, base_url, api_key = cached
-                llm_base_url = f"{base_url}/v1"
-                upstream_key = api_key or upstream_key
-                provider_found = True
-                logger.debug("Routing %smodel '%s' to cached provider '%s'", tag, model_name, cached_provider_id)
-        if not provider_found:
-            try:
-                default_provider = await self._provider_store.get_default_provider()
-                if default_provider:
-                    llm_base_url = f"{default_provider.base_url}/v1"
-                    api_key = await self._provider_store.get_api_key(default_provider.id)
-                    if api_key:
-                        upstream_key = api_key
-                    logger.debug("Routing %smodel '%s' to default provider '%s'", tag, model_name, default_provider.id)
-            except Exception:
-                logger.debug("Failed to look up default provider for %smodel '%s'", tag, model_name, exc_info=True)
-        return llm_base_url, upstream_key
+            provider = await self._fetch_provider(provider_id, tag, model_name)
+            if provider is not None and provider.enabled:
+                if provider_id in self._warned_providers:
+                    self._warned_providers.discard(provider_id)
+                    logger.info("Provider '%s' routable again for %smodel '%s'", provider_id, tag, model_name)
+                logger.debug("Routing %smodel '%s' to explicit provider '%s'", tag, model_name, provider_id)
+                return await self._endpoint_for(provider, env_endpoint.api_key)
+            if provider_id not in self._warned_providers:
+                self._warned_providers.add(provider_id)
+                logger.warning(
+                    "Explicit provider '%s' for %smodel '%s' is %s — falling back",
+                    provider_id, tag, model_name,
+                    "disabled" if provider is not None else "deleted/missing",
+                )
+        cached_provider_id = self._provider_model_cache.get(model_name)
+        if cached_provider_id and cached_provider_id != provider_id:
+            provider = await self._fetch_provider(cached_provider_id, tag, model_name)
+            if provider is not None and provider.enabled:
+                logger.debug("Routing %smodel '%s' to mapped provider '%s'", tag, model_name, cached_provider_id)
+                return await self._endpoint_for(provider, env_endpoint.api_key)
+            if provider is not None:
+                logger.debug("Mapped provider '%s' for %smodel '%s' is disabled — skipping", cached_provider_id, tag, model_name)
+        default_provider = await self._fetch_default_provider(tag, model_name)
+        if default_provider is not None and default_provider.enabled:
+            logger.debug("Routing %smodel '%s' to default provider '%s'", tag, model_name, default_provider.id)
+            return await self._endpoint_for(default_provider, env_endpoint.api_key)
+        return env_endpoint
+
+    async def _fetch_provider(self, provider_id: str, tag: str, model_name: str):
+        try:
+            return await self._provider_store.get_provider(provider_id)
+        except Exception:
+            logger.debug("Failed to look up provider '%s' for %smodel '%s'", provider_id, tag, model_name, exc_info=True)
+            return None
+
+    async def _fetch_default_provider(self, tag: str, model_name: str):
+        try:
+            return await self._provider_store.get_default_provider()
+        except Exception:
+            logger.debug("Failed to look up default provider for %smodel '%s'", tag, model_name, exc_info=True)
+            return None
+
+    async def _endpoint_for(self, provider: Any, fallback_key: str) -> ProviderEndpoint:
+        try:
+            api_key = await self._provider_store.get_api_key(provider.id)
+        except Exception:
+            logger.debug("Failed to read API key for provider '%s'", provider.id, exc_info=True)
+            api_key = None
+        return build_provider_endpoint(provider, api_key, fallback_key)
 
     async def _resolve_reasoning_rule(
         self, model_name: str, base_url: str, provider_id: Optional[str]
     ) -> Dict[str, Any]:
         """Pick the reasoning wire rule — prefer live-probed capabilities.
 
-        Candidate providers mirror ``_resolve_provider_endpoint``'s order:
-        explicit ``provider_id`` → per-model provider cache → default
-        provider. A cached probe result (``provider_model_reasoning``)
-        overrides regex family matching for families the probe can describe
-        (generic, thinking toggle, effort) — richer families (claude,
-        gemini, ``thinking`` kwarg, openai object) stay authoritative.
+        ``provider_id`` is the *resolved* provider from
+        ``_resolve_provider_endpoint``, so a cached probe
+        (``provider_model_reasoning``) always describes the actual wire
+        target. Probed capabilities override regex family matching for
+        families the probe can describe (generic, thinking toggle, effort) —
+        richer families (claude, gemini, ``thinking`` kwarg, openai object)
+        stay authoritative.
         """
-        if self._provider_store is not None:
-            candidates: List[str] = [provider_id] if provider_id else []
-            cached = self._provider_model_cache.get(model_name)
-            if cached and cached[0] and cached[0] not in candidates:
-                candidates.append(cached[0])
-            for pid in candidates:
-                rule = await self._caps_rule(pid, model_name, base_url)
-                if rule is not None:
-                    return rule
-            try:
-                default_provider = await self._provider_store.get_default_provider()
-            except Exception:
-                default_provider = None
-            if default_provider and default_provider.id not in candidates:
-                rule = await self._caps_rule(default_provider.id, model_name, base_url)
-                if rule is not None:
-                    return rule
+        if provider_id and self._provider_store is not None:
+            rule = await self._caps_rule(provider_id, model_name, base_url)
+            if rule is not None:
+                return rule
         return match_family(model_name, base_url)
 
     async def _caps_rule(
@@ -378,10 +397,12 @@ class ChainBuilder:
         provider_id = entry.get("provider_id")
         extra_body = self._merge_extra_body(entry)
         extra_parameters = entry.get("extra_parameters")
+        endpoint = await self._resolve_provider_endpoint(model_name, provider_id, label="agent")
         cache_key = (
             model_name,
             float(temperature),
             provider_id,
+            endpoint,
             max_tokens,
             self._freeze_json(extra_body),
             self._freeze_json(extra_parameters),
@@ -389,17 +410,17 @@ class ChainBuilder:
         )
         async with self._cache_lock:
             if cache_key not in self._agent_llm_cache:
-                llm_base_url, upstream_key = await self._resolve_provider_endpoint(model_name, provider_id, label="agent")
                 if reasoning:
-                    rule = await self._resolve_reasoning_rule(model_name, llm_base_url, provider_id)
+                    rule = await self._resolve_reasoning_rule(model_name, endpoint.base_url, endpoint.provider_id)
                     wire = translate_to_wire(reasoning, rule)
                     extra_body = deep_merge_extra_body(extra_body, wire)
                 client_kwargs: Dict[str, Any] = {
-                    "base_url": llm_base_url,
-                    "openai_api_key": upstream_key,
+                    "base_url": endpoint.base_url,
+                    "openai_api_key": endpoint.api_key,
                     "model": model_name,
                     "temperature": float(temperature),
                     "streaming": False,
+                    **self._endpoint_client_kwargs(endpoint),
                 }
                 if max_tokens is not None:
                     client_kwargs["max_tokens"] = max_tokens
@@ -422,25 +443,27 @@ class ChainBuilder:
         extra_parameters: Optional[Dict[str, Any]] = None,
     ) -> ChatOpenAIWithReasoning:
         stream_options = {"include_usage": True} if streaming else None
+        endpoint = await self._resolve_provider_endpoint(model, provider_id)
         cache_key = (
             model,
             float(temperature),
             bool(streaming),
             self._freeze_reasoning(reasoning),
             provider_id,
+            endpoint,
             tuple(sorted(stream_options.items())) if stream_options else None,
             self._freeze_json(extra_body),
             self._freeze_json(extra_parameters),
         )
         async with self._cache_lock:
             if cache_key not in self._llm_cache:
-                llm_base_url, upstream_key = await self._resolve_provider_endpoint(model, provider_id)
                 client_kwargs: Dict[str, Any] = {
-                    "base_url": llm_base_url,
-                    "openai_api_key": upstream_key,
+                    "base_url": endpoint.base_url,
+                    "openai_api_key": endpoint.api_key,
                     "model": model,
                     "temperature": float(temperature),
                     "streaming": bool(streaming),
+                    **self._endpoint_client_kwargs(endpoint),
                 }
                 model_kwargs: Dict[str, Any] = dict(extra_parameters or {})
                 if streaming:
@@ -449,13 +472,26 @@ class ChainBuilder:
                     client_kwargs["model_kwargs"] = model_kwargs
                 merged_extra_body = dict(extra_body) if extra_body else {}
                 if reasoning:
-                    rule = await self._resolve_reasoning_rule(model, llm_base_url, provider_id)
+                    rule = await self._resolve_reasoning_rule(model, endpoint.base_url, endpoint.provider_id)
                     wire = translate_to_wire(reasoning, rule)
                     merged_extra_body = deep_merge_extra_body(merged_extra_body, wire)
                 if merged_extra_body:
                     client_kwargs["extra_body"] = merged_extra_body
                 self._llm_cache[cache_key] = ChatOpenAIWithReasoning(**client_kwargs)
             return self._llm_cache[cache_key]
+
+    @staticmethod
+    def _endpoint_client_kwargs(endpoint: ProviderEndpoint) -> Dict[str, Any]:
+        """Translate stored provider options into ChatOpenAI client kwargs."""
+        kwargs: Dict[str, Any] = {}
+        if endpoint.timeout_seconds is not None:
+            kwargs["request_timeout"] = endpoint.timeout_seconds
+        if endpoint.max_retries is not None:
+            kwargs["max_retries"] = endpoint.max_retries
+        headers = endpoint.headers_dict()
+        if headers:
+            kwargs["default_headers"] = headers
+        return kwargs
 
     def _resolve_model_settings(self, assistant_name: str) -> Tuple[str, float, Optional[Dict[str, Any]]]:
         entry = self._get_assistant_entry(assistant_name)

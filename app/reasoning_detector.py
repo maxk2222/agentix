@@ -95,6 +95,7 @@ async def detect_reasoning_support(
     api_key: Optional[str] = None,
     model: str,
     timeout: float = 15.0,
+    extra_headers: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Probe a chat-completions endpoint for reasoning controls.
 
@@ -108,6 +109,8 @@ async def detect_reasoning_support(
     """
     url = base_url.rstrip("/") + "/v1/chat/completions"
     headers: Dict[str, str] = {"Content-Type": "application/json"}
+    if extra_headers:
+        headers.update(extra_headers)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
@@ -179,7 +182,7 @@ async def ensure_detected_for_provider(
     """
     store = provider_store
     provider = await store.get_provider(provider_id)
-    if provider is None:
+    if provider is None or not getattr(provider, "enabled", True):
         return None
 
     cached = await store.get_model_reasoning_status(provider_id, model)
@@ -198,6 +201,7 @@ async def _run_detection(store: Any, provider: Any, model: str) -> None:
             api_key=api_key,
             model=model,
             timeout=float(getattr(provider, "timeout_seconds", 30) or 30),
+            extra_headers=getattr(provider, "extra_headers", None),
         )
     except Exception as exc:  # never let the background task die unrecorded
         logger.exception(

@@ -681,3 +681,260 @@ async def test_put_instructions_reasoning_invalid_rejected(tmp_path: Path):
     with pytest.raises(HTTPException) as exc_info:
         await put_instructions(request, payload)
     assert exc_info.value.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Provider admin mutations → background membership refresh
+# ---------------------------------------------------------------------------
+
+
+class _FakeProviderStore:
+    def __init__(self, providers=None):
+        self._providers = dict(providers or {})
+        self.created = []
+        self.updated = []
+        self.deleted = []
+        self.rotated = []
+
+    async def get_provider(self, provider_id):
+        return self._providers.get(provider_id)
+
+    async def create_provider(self, provider):
+        self._providers[provider.id] = provider
+        self.created.append(provider.id)
+
+    async def update_provider(self, provider):
+        self._providers[provider.id] = provider
+        self.updated.append(provider.id)
+
+    async def delete_provider(self, provider_id):
+        self._providers.pop(provider_id, None)
+        self.deleted.append(provider_id)
+
+    async def rotate_api_key(self, provider_id, key):
+        self.rotated.append((provider_id, key))
+
+
+class _FakeRagScheduler:
+    def __init__(self):
+        self.refresh_scheduled = 0
+
+    def schedule_provider_model_refresh(self):
+        self.refresh_scheduled += 1
+
+
+def _provider_request(app_config, store, rag=None):
+    return _make_request(app_config, _provider_store=store, rag_application=rag)
+
+
+def _provider_payload(**overrides):
+    from app.routers.admin import ProviderPayload
+    data = dict(id="p1", name="P1", base_url="http://host/v1")
+    data.update(overrides)
+    return ProviderPayload(**data)
+
+
+@pytest.mark.asyncio
+async def test_create_provider_schedules_refresh_and_normalizes_url(tmp_path):
+    from app.routers.admin import create_provider
+    app_config = _build_app_config(tmp_path)
+    store, rag = _FakeProviderStore(), _FakeRagScheduler()
+    request = _provider_request(app_config, store, rag)
+
+    await create_provider(request, _provider_payload())
+    assert store.created == ["p1"]
+    assert store._providers["p1"].base_url == "http://host"  # /v1 normalized on write
+    assert rag.refresh_scheduled == 1
+
+
+@pytest.mark.asyncio
+async def test_update_provider_schedules_refresh(tmp_path):
+    from app.routers.admin import update_provider
+    app_config = _build_app_config(tmp_path)
+    existing = SimpleNamespace(id="p1")
+    store, rag = _FakeProviderStore({"p1": existing}), _FakeRagScheduler()
+    request = _provider_request(app_config, store, rag)
+
+    await update_provider(request, "p1", _provider_payload(base_url="http://h2"))
+    assert store.updated == ["p1"]
+    assert rag.refresh_scheduled == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_provider_schedules_refresh(tmp_path):
+    from app.routers.admin import delete_provider
+    app_config = _build_app_config(tmp_path)
+    store, rag = _FakeProviderStore({"p1": SimpleNamespace(id="p1")}), _FakeRagScheduler()
+    request = _provider_request(app_config, store, rag)
+
+    await delete_provider(request, "p1")
+    assert store.deleted == ["p1"]
+    assert rag.refresh_scheduled == 1
+
+
+@pytest.mark.asyncio
+async def test_rotate_secret_schedules_refresh(tmp_path):
+    from app.routers.admin import rotate_provider_secret, SecretRotatePayload
+    app_config = _build_app_config(tmp_path)
+    store, rag = _FakeProviderStore({"p1": SimpleNamespace(id="p1")}), _FakeRagScheduler()
+    request = _provider_request(app_config, store, rag)
+
+    await rotate_provider_secret(request, "p1", SecretRotatePayload(api_key="new-key"))
+    assert store.rotated == [("p1", "new-key")]
+    assert rag.refresh_scheduled == 1
+
+
+@pytest.mark.asyncio
+async def test_import_providers_schedules_refresh(tmp_path):
+    from app.routers.admin import import_providers
+    app_config = _build_app_config(tmp_path)
+    store, rag = _FakeProviderStore(), _FakeRagScheduler()
+    request = _provider_request(app_config, store, rag)
+
+    await import_providers(request, _provider_payload())
+    assert store.created == ["p1"]
+    assert rag.refresh_scheduled == 1
+
+
+@pytest.mark.asyncio
+async def test_schedule_provider_model_refresh_is_nonblocking(tmp_path):
+    """schedule() returns immediately and coalesces into one worker task."""
+    import asyncio
+    from agent.application import RAGApplication
+
+    class _Store:
+        def __init__(self):
+            self.list_calls = 0
+        async def get_enabled_providers(self):
+            self.list_calls += 1
+            return []
+        async def fetch_models(self, pid):
+            return []
+
+    app = RAGApplication.__new__(RAGApplication)
+    app._provider_store = _Store()
+    app._provider_model_cache = {}
+    app._provider_cache_lock = asyncio.Lock()
+    app._provider_refresh_task = None
+    app._provider_refresh_requested = False
+    app._chain_builder = None
+
+    app.schedule_provider_model_refresh()
+    app.schedule_provider_model_refresh()  # coalesced, no second task
+    task = app._provider_refresh_task
+    assert task is not None
+    await task
+    assert app._provider_store.list_calls >= 1
+
+
+# ---------------------------------------------------------------------------
+# Serving-provider resolution (mirrors ChainBuilder._resolve_provider_endpoint)
+# ---------------------------------------------------------------------------
+
+
+class _Prov:
+    def __init__(self, pid, enabled=True, native=None):
+        self.id = pid
+        self.enabled = enabled
+        self.supports_native_tool_calls = native
+
+
+class _ServingStore:
+    def __init__(self, providers=(), default_id=None, hints=None):
+        self._providers = {p.id: p for p in providers}
+        self._default_id = default_id
+        self._hints = hints or {}
+
+    async def get_provider(self, pid):
+        return self._providers.get(pid)
+
+    async def get_default_provider(self):
+        return self._providers.get(self._default_id)
+
+    async def get_model_tool_calling_status(self, pid, model):
+        return self._hints.get((pid, model))
+
+
+def _make_app_for_serving(store, instructions, membership=None):
+    from agent.application import RAGApplication
+
+    app = RAGApplication.__new__(RAGApplication)
+    app._provider_store = store
+    app._provider_model_cache = membership or {}
+    app.instructions = instructions
+    return app
+
+
+@pytest.mark.asyncio
+async def test_serving_provider_explicit_pin_wins():
+    store = _ServingStore(
+        [_Prov("pin"), _Prov("mapped"), _Prov("dflt")], default_id="dflt"
+    )
+    app = _make_app_for_serving(
+        store,
+        {"A": {"model": "m1", "provider_id": "pin"}},
+        membership={"m1": "mapped"},
+    )
+    provider, model = await app._resolve_serving_provider("A")
+    assert provider.id == "pin"
+    assert model == "m1"
+
+
+@pytest.mark.asyncio
+async def test_serving_provider_disabled_pin_falls_to_membership():
+    store = _ServingStore(
+        [_Prov("pin", enabled=False), _Prov("mapped")], default_id=None
+    )
+    app = _make_app_for_serving(
+        store,
+        {"A": {"model": "m1", "provider_id": "pin"}},
+        membership={"m1": "mapped"},
+    )
+    provider, model = await app._resolve_serving_provider("A")
+    assert provider.id == "mapped"
+    assert model == "m1"
+
+
+@pytest.mark.asyncio
+async def test_serving_provider_disabled_pin_and_map_falls_to_default():
+    store = _ServingStore(
+        [_Prov("pin", enabled=False), _Prov("mapped", enabled=False), _Prov("dflt")],
+        default_id="dflt",
+    )
+    app = _make_app_for_serving(
+        store,
+        {"A": {"model": "m1", "provider_id": "pin"}},
+        membership={"m1": "mapped"},
+    )
+    provider, model = await app._resolve_serving_provider("A")
+    assert provider.id == "dflt"
+    assert model == "m1"
+
+
+@pytest.mark.asyncio
+async def test_serving_provider_disabled_default_returns_none():
+    store = _ServingStore([_Prov("dflt", enabled=False)], default_id="dflt")
+    app = _make_app_for_serving(store, {"A": {"model": "m1"}})
+    provider, _ = await app._resolve_serving_provider("A")
+    assert provider is None
+
+
+@pytest.mark.asyncio
+async def test_tool_calling_hint_uses_serving_provider_not_dead_pin():
+    """Hint must describe the provider that actually serves the model."""
+    store = _ServingStore(
+        [_Prov("pin", enabled=False), _Prov("dflt")],
+        default_id="dflt",
+        hints={("dflt", "m1"): True},
+    )
+    app = _make_app_for_serving(
+        store, {"A": {"model": "m1", "provider_id": "pin"}}
+    )
+    assert await app._get_provider_tool_calling_hint("A") is True
+
+
+@pytest.mark.asyncio
+async def test_tool_calling_hint_provider_wide_fallback():
+    store = _ServingStore([_Prov("dflt", native=False)], default_id="dflt")
+    app = _make_app_for_serving(store, {"A": {"model": "m1"}})
+    assert await app._get_provider_tool_calling_hint("A") is False

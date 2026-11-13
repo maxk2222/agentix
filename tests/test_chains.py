@@ -518,12 +518,33 @@ class _FakeReasoningProviderStore:
     async def get_default_provider(self):
         return self._default
 
+    async def get_provider(self, provider_id):
+        if self._default is not None and self._default.id == provider_id:
+            return self._default
+        return None
+
+    async def get_api_key(self, provider_id):
+        return None
+
 
 class _FakeProvider:
-    def __init__(self, pid):
+    def __init__(
+        self,
+        pid,
+        base_url="http://llm",
+        enabled=True,
+        is_default=False,
+        extra_headers=None,
+        timeout_seconds=30,
+        max_retries=3,
+    ):
         self.id = pid
-        self.base_url = "http://llm"
-        self.timeout_seconds = 30
+        self.base_url = base_url
+        self.enabled = enabled
+        self.is_default = is_default
+        self.extra_headers = extra_headers
+        self.timeout_seconds = timeout_seconds
+        self.max_retries = max_retries
 
 
 def _make_builder(tmp_path, provider_store=None):
@@ -573,8 +594,9 @@ async def test_resolve_reasoning_rule_no_store_uses_family(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_resolve_reasoning_rule_checks_default_provider(tmp_path):
-    """Default-provider caps apply when no explicit provider is given."""
+async def test_resolve_reasoning_rule_uses_resolved_provider(tmp_path):
+    """Caps are probed for the provider the endpoint actually resolved to —
+    e.g. the default provider whose id comes back in endpoint.provider_id."""
     store = _FakeReasoningProviderStore(
         caps_by_key={
             ("pdefault", "m"): {
@@ -588,7 +610,11 @@ async def test_resolve_reasoning_rule_checks_default_provider(tmp_path):
         default_provider=_FakeProvider("pdefault"),
     )
     builder = _make_builder(tmp_path, provider_store=store)
-    rule = await builder._resolve_reasoning_rule("m", "http://llm/v1", None)
+    # Resolution of an unpinned model lands on the default provider; the rule
+    # must probe exactly that provider, not just the explicit assistant pin.
+    endpoint = await builder._resolve_provider_endpoint("m", None)
+    assert endpoint.provider_id == "pdefault"
+    rule = await builder._resolve_reasoning_rule("m", endpoint.base_url, endpoint.provider_id)
     assert rule["wire"] == "qwen_thinking"
 
 
@@ -693,3 +719,226 @@ async def test_build_chains_system_instructions_with_braces_stay_literal(tmp_pat
     # Formatting must not raise — and the text arrives verbatim.
     msgs = qa_prompt.format_messages(chat_history=[], input_messages=[])
     assert msgs[0].content == raw_instructions
+
+
+# ---------------------------------------------------------------------------
+# Provider endpoint resolution — fresh lookups, enabled checks, fallbacks
+# ---------------------------------------------------------------------------
+
+
+class _FakeEndpointStore:
+    """Provider-store fake with providers + keys + default for resolution tests."""
+
+    def __init__(self, providers=None, api_keys=None, default_id=None):
+        self._providers = {p.id: p for p in (providers or [])}
+        self._api_keys = api_keys or {}
+        self._default_id = default_id
+
+    async def get_provider(self, provider_id):
+        return self._providers.get(provider_id)
+
+    async def get_api_key(self, provider_id):
+        return self._api_keys.get(provider_id)
+
+    async def get_default_provider(self):
+        return self._providers.get(self._default_id)
+
+
+@pytest.mark.asyncio
+async def test_endpoint_resolution_fresh_after_url_edit(tmp_path):
+    """A base_url edit must take effect without any cache refresh."""
+    provider = _FakeProvider("p1", base_url="http://old-host")
+    store = _FakeEndpointStore(providers=[provider], api_keys={"p1": "k"})
+    builder = _make_builder(tmp_path, provider_store=store)
+
+    ep1 = await builder._resolve_provider_endpoint("m", "p1")
+    assert ep1.base_url == "http://old-host/v1"
+
+    provider.base_url = "http://new-host"
+    ep2 = await builder._resolve_provider_endpoint("m", "p1")
+    assert ep2.base_url == "http://new-host/v1"
+
+
+@pytest.mark.asyncio
+async def test_endpoint_resolution_normalizes_v1_suffix(tmp_path):
+    """Stored 'http://host/v1' must not produce '/v1/v1' on the wire."""
+    provider = _FakeProvider("p1", base_url="http://host/v1/")
+    store = _FakeEndpointStore(providers=[provider])
+    builder = _make_builder(tmp_path, provider_store=store)
+    ep = await builder._resolve_provider_endpoint("m", "p1")
+    assert ep.base_url == "http://host/v1"
+
+
+@pytest.mark.asyncio
+async def test_disabled_explicit_provider_falls_back_to_default(tmp_path):
+    store = _FakeEndpointStore(
+        providers=[
+            _FakeProvider("p1", enabled=False),
+            _FakeProvider("pdef", base_url="http://def", is_default=True),
+        ],
+        default_id="pdef",
+    )
+    builder = _make_builder(tmp_path, provider_store=store)
+    ep = await builder._resolve_provider_endpoint("m", "p1")
+    assert ep.provider_id == "pdef"
+
+
+@pytest.mark.asyncio
+async def test_deleted_membership_provider_falls_back(tmp_path):
+    """Membership map pointing at a deleted provider must not send traffic there."""
+    store = _FakeEndpointStore(
+        providers=[_FakeProvider("pdef", base_url="http://def", is_default=True)],
+        default_id="pdef",
+    )
+    builder = _make_builder(tmp_path, provider_store=store)
+    builder.set_provider_model_cache({"m": "gone"})
+    ep = await builder._resolve_provider_endpoint("m", None)
+    assert ep.provider_id == "pdef"
+
+
+@pytest.mark.asyncio
+async def test_membership_map_resolves_fresh_credentials(tmp_path):
+    """The map holds only provider_id — key rotation works without refresh."""
+    provider = _FakeProvider("p1", base_url="http://host")
+    store = _FakeEndpointStore(providers=[provider], api_keys={"p1": "key-v1"})
+    builder = _make_builder(tmp_path, provider_store=store)
+    builder.set_provider_model_cache({"m": "p1"})
+
+    ep1 = await builder._resolve_provider_endpoint("m", None)
+    assert ep1.provider_id == "p1" and ep1.api_key == "key-v1"
+
+    store._api_keys["p1"] = "key-v2"
+    ep2 = await builder._resolve_provider_endpoint("m", None)
+    assert ep2.api_key == "key-v2"
+
+
+def _make_builder_with_instructions(tmp_path, instructions, provider_store=None):
+    builder = ChainBuilder(config=_make_config(tmp_path), instructions=instructions)
+    if provider_store is not None:
+        builder.set_provider_store(provider_store)
+    return builder
+
+
+@pytest.mark.asyncio
+async def test_llm_cache_key_includes_endpoint(tmp_path):
+    """Editing provider URL must produce a *new* client, not reuse the old one."""
+    instructions = {"A": {"model": "m", "provider_id": "p1", "system_instructions": "x"}}
+    provider = _FakeProvider("p1", base_url="http://old-host")
+    store = _FakeEndpointStore(providers=[provider])
+    builder = _make_builder_with_instructions(tmp_path, instructions, store)
+
+    with patch("agent.chains.ChatOpenAIWithReasoning") as mock_llm:
+        await builder._get_llm_for_assistant("A", streaming=False)
+        assert len(builder._llm_cache) == 1
+        assert mock_llm.call_args.kwargs["base_url"] == "http://old-host/v1"
+
+        provider.base_url = "http://new-host"
+        await builder._get_llm_for_assistant("A", streaming=False)
+        assert len(builder._llm_cache) == 2
+        assert mock_llm.call_args.kwargs["base_url"] == "http://new-host/v1"
+
+
+@pytest.mark.asyncio
+async def test_provider_options_wired_into_client(tmp_path):
+    """extra_headers / timeout_seconds / max_retries reach the LLM client."""
+    instructions = {"A": {"model": "m", "provider_id": "p1", "system_instructions": "x"}}
+    provider = _FakeProvider(
+        "p1",
+        extra_headers={"X-Team": "research"},
+        timeout_seconds=45,
+        max_retries=9,
+    )
+    store = _FakeEndpointStore(providers=[provider])
+    builder = _make_builder_with_instructions(tmp_path, instructions, store)
+
+    with patch("agent.chains.ChatOpenAIWithReasoning") as mock_llm:
+        await builder._get_llm_for_assistant("A", streaming=False)
+        kwargs = mock_llm.call_args.kwargs
+        assert kwargs["default_headers"] == {"X-Team": "research"}
+        assert kwargs["request_timeout"] == 45
+        assert kwargs["max_retries"] == 9
+
+
+@pytest.mark.asyncio
+async def test_explicit_provider_id_beats_membership(tmp_path):
+    """An explicit provider_id stays authoritative over the membership map."""
+    store = _FakeEndpointStore(
+        providers=[
+            _FakeProvider("explicit", base_url="http://exp"),
+            _FakeProvider("mapped", base_url="http://map"),
+        ]
+    )
+    builder = _make_builder(tmp_path, provider_store=store)
+    builder.set_provider_model_cache({"m": "mapped"})
+    ep = await builder._resolve_provider_endpoint("m", "explicit")
+    assert ep.provider_id == "explicit"
+
+
+@pytest.mark.asyncio
+async def test_env_fallback_when_no_provider_resolves(tmp_path):
+    store = _FakeEndpointStore()  # empty store, no default
+    builder = _make_builder(tmp_path, provider_store=store)
+    ep = await builder._resolve_provider_endpoint("m", None)
+    assert ep.provider_id is None
+    assert ep.base_url.endswith("/v1")
+
+
+# ---------------------------------------------------------------------------
+# build_provider_model_map — deterministic collision handling
+# ---------------------------------------------------------------------------
+
+
+def test_model_map_default_provider_wins_collisions(caplog):
+    from app.llm_providers import build_provider_model_map
+
+    providers = [
+        _FakeProvider("alpha", is_default=False),
+        _FakeProvider("zeta-default", is_default=True),
+    ]
+    models = {
+        "alpha": ["shared-model", "alpha-only"],
+        "zeta-default": ["shared-model", "zeta-only"],
+    }
+    with caplog.at_level("WARNING"):
+        result = build_provider_model_map(providers, models)
+    assert result["shared-model"] == "zeta-default"
+    assert result["alpha-only"] == "alpha"
+    assert result["zeta-only"] == "zeta-default"
+    assert "multiple providers" in caplog.text
+
+
+def test_model_map_deterministic_without_default(caplog):
+    from app.llm_providers import build_provider_model_map
+
+    providers = [_FakeProvider("b-provider"), _FakeProvider("a-provider")]
+    models = {"b-provider": ["m"], "a-provider": ["m"]}
+    result = build_provider_model_map(providers, models)
+    # provider-id order wins when no default is set — deterministic, not
+    # iteration-order dependent.
+    assert result["m"] == "a-provider"
+
+
+# ---------------------------------------------------------------------------
+# normalize_base_url
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_base_url_variants():
+    from app.llm_providers import normalize_base_url
+
+    assert normalize_base_url("http://host") == "http://host"
+    assert normalize_base_url("http://host/") == "http://host"
+    assert normalize_base_url("  http://host/  ") == "http://host"
+    assert normalize_base_url("http://host/v1") == "http://host"
+    assert normalize_base_url("http://host/v1/") == "http://host"
+    assert normalize_base_url("http://host/v1/v1") == "http://host"
+    assert normalize_base_url("http://host/api/v1") == "http://host/api"
+    assert normalize_base_url("") == ""
+    assert normalize_base_url(None) == ""
+
+
+def test_llm_provider_normalizes_base_url_on_construction():
+    from app.llm_providers import LLMProvider
+
+    p = LLMProvider(id="x", name="x", base_url=" http://h/v1/ ")
+    assert p.base_url == "http://h"

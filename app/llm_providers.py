@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, asdict
+import re
+from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import httpx
 from sqlalchemy import text
@@ -18,6 +19,103 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from agent.utils.pg_helpers import _quote_identifier
 
 logger = logging.getLogger(__name__)
+
+_VN_SUFFIX = re.compile(r"(?:/v\d+)+$", re.IGNORECASE)
+
+
+def normalize_base_url(url: Optional[str]) -> str:
+    """Canonicalize a provider base URL to the API root (no ``/vN`` suffix).
+
+    Trims whitespace and trailing slashes, then strips one or more trailing
+    ``/vN`` path segments so callers can uniformly append ``/v1/...`` — a
+    stored ``http://host/v1`` (the common convention) otherwise produces
+    ``/v1/v1`` and every request 404s.
+    """
+    u = (url or "").strip().rstrip("/")
+    previous = None
+    while u != previous:
+        previous = u
+        candidate = _VN_SUFFIX.sub("", u).rstrip("/")
+        # Never strip into the scheme/authority itself ("http://v1" is a
+        # hostname, not a versioned path) — only a URL that still contains
+        # a "//" authority marker may drop its version suffix.
+        if "//" not in candidate:
+            break
+        u = candidate
+    return u
+
+
+@dataclass(frozen=True)
+class ProviderEndpoint:
+    """Fully resolved, immutable connection target for one provider.
+
+    Hashable so it can be embedded in the LLM client cache key — any change
+    to URL, API key, headers, timeout or retries yields a different key and
+    therefore a fresh client automatically. ``base_url`` already carries the
+    ``/v1`` suffix; ``provider_id`` is the *resolved* provider (``None`` for
+    the environment fallback). Secrets are excluded from ``repr`` so the
+    endpoint can be logged safely.
+    """
+
+    provider_id: Optional[str]
+    base_url: str
+    api_key: str = field(repr=False)
+    extra_headers: Optional[Tuple[Tuple[str, str], ...]] = field(default=None, repr=False)
+    timeout_seconds: Optional[float] = None
+    max_retries: Optional[int] = None
+
+    def headers_dict(self) -> Optional[Dict[str, str]]:
+        return dict(self.extra_headers) if self.extra_headers else None
+
+
+def build_provider_endpoint(
+    provider: "LLMProvider",
+    api_key: Optional[str],
+    fallback_key: str,
+) -> ProviderEndpoint:
+    """Resolve a stored provider row plus its secret into a wire endpoint."""
+    headers = provider.extra_headers
+    frozen_headers = (
+        tuple(sorted(headers.items()))
+        if isinstance(headers, dict) and headers
+        else None
+    )
+    return ProviderEndpoint(
+        provider_id=provider.id,
+        base_url=f"{normalize_base_url(provider.base_url)}/v1",
+        api_key=(api_key or "").strip() or fallback_key,
+        extra_headers=frozen_headers,
+        timeout_seconds=provider.timeout_seconds,
+        max_retries=provider.max_retries,
+    )
+
+
+def build_provider_model_map(
+    providers: Sequence["LLMProvider"],
+    models_by_provider: Mapping[str, Sequence[str]],
+) -> Dict[str, str]:
+    """Build the ``model -> provider_id`` membership map.
+
+    Deterministic collision rule: the default provider claims ambiguous
+    models first; remaining collisions resolve in provider-id order. Every
+    collision is logged — last-iterated-wins must never silently reroute
+    traffic.
+    """
+    ordered = sorted(providers, key=lambda p: (not p.is_default, p.id))
+    default_ids = {p.id for p in providers if p.is_default}
+    result: Dict[str, str] = {}
+    for provider in ordered:
+        for model in models_by_provider.get(provider.id, []):
+            if model in result:
+                logger.warning(
+                    "Model '%s' is served by multiple providers ('%s' and '%s'); "
+                    "keeping '%s'%s. Pin provider_id on the assistant to override.",
+                    model, result[model], provider.id, result[model],
+                    " (default provider)" if result[model] in default_ids else "",
+                )
+                continue
+            result[model] = provider.id
+    return result
 
 
 @dataclass
@@ -38,6 +136,12 @@ class LLMProvider:
     supports_native_tool_calls: Optional[bool] = None
     tool_calling_checked_at: Optional[str] = None
     tool_calling_check_error: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        # Canonical form on every construction path — store reads, admin
+        # payload writes and imports all funnel through here, so legacy rows
+        # carrying a "/v1" suffix are healed on read and never re-saved.
+        self.base_url = normalize_base_url(self.base_url)
 
 
 class LLMProviderStore:
@@ -289,13 +393,19 @@ class LLMProviderStore:
                 {"id": provider_id},
             )
 
-    async def fetch_models(self, provider_id: str) -> List[str]:
-        """Fetch available model IDs from a provider's /v1/models endpoint."""
+    async def fetch_models(self, provider_id: str) -> Optional[List[str]]:
+        """Fetch available model IDs from a provider's /v1/models endpoint.
+
+        Returns ``None`` when the fetch itself fails so callers can
+        distinguish "provider serves no models" from "provider
+        unreachable" — the membership refresh must not drop all mappings on
+        a transient failure.
+        """
         provider = await self.get_provider(provider_id)
         if provider is None:
             return []
         api_key = await self.get_api_key(provider_id)
-        headers = {}
+        headers = dict(provider.extra_headers or {})
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         try:
@@ -307,7 +417,7 @@ class LLMProviderStore:
                 return [m["id"] for m in models if "id" in m]
         except Exception:
             logger.exception("Failed to fetch models from provider %s", provider_id)
-            return []
+            return None
 
     # ------------------------------------------------------------------
     # Secrets
@@ -568,7 +678,7 @@ class LLMProviderStore:
                     LIMIT 1
                     """
                 ),
-                {"base_url": base_url},
+                {"base_url": normalize_base_url(base_url)},
             )
             row = result.mappings().fetchone()
             if row is None:
