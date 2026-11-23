@@ -179,6 +179,11 @@ async def create_trigger(request: Request, payload: TriggerCreatePayload):
         timeout_seconds=payload.timeout_seconds,
     )
     entry.next_run_at = _compute_next_run(entry)
+    if entry.next_run_at is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid schedule: no future run can be computed",
+        )
 
     await store.create_trigger(entry)
     logger.info("Created trigger '%s' (%s)", entry.name, entry.id)
@@ -241,6 +246,11 @@ async def update_trigger(request: Request, trigger_id: str, payload: TriggerUpda
         from app.triggers_scheduler import _compute_next_run
 
         entry.next_run_at = _compute_next_run(entry)
+        if entry.next_run_at is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid schedule: no future run can be computed",
+            )
 
     ok = await store.update_trigger(entry)
     if not ok:
@@ -272,6 +282,8 @@ async def run_trigger_now(request: Request, trigger_id: str):
         run_id = await scheduler.run_trigger_now(trigger_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     return {"success": True, "run_id": run_id}
 
 

@@ -278,6 +278,20 @@ class TriggersStore:
             )
             return int(getattr(result, "rowcount", 0) or 0) > 0
 
+    async def set_enabled(self, trigger_id: str, enabled: bool) -> None:
+        await self.ensure_tables()
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                text(
+                    f"""
+                    UPDATE {TRIGGERS_TABLE}
+                    SET enabled = :enabled, updated_at = NOW()
+                    WHERE id = :id
+                    """
+                ),
+                {"id": trigger_id, "enabled": enabled},
+            )
+
     async def update_next_run(self, trigger_id: str, next_run_at: Optional[datetime]) -> None:
         await self.ensure_tables()
         async with self._engine.begin() as conn:

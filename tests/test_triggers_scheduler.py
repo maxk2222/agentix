@@ -52,6 +52,12 @@ class FakeStore:
                 t.next_run_at = next_run_at
                 break
 
+    async def set_enabled(self, trigger_id: str, enabled: bool) -> None:
+        for t in self.triggers:
+            if t.id == trigger_id:
+                t.enabled = enabled
+                break
+
     async def finish_run(self, run_id: int, status: str, result_text: Optional[str] = None,
                          error_text: Optional[str] = None) -> None:
         for run in self.runs:
@@ -176,6 +182,30 @@ def test_compute_next_run_cron():
     base = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
     result = _compute_next_run(t, base)
     # Next 09:00 after 12:00 is next day
+    assert result == datetime(2025, 1, 2, 9, 0, 0, tzinfo=timezone.utc)
+
+
+def test_compute_next_run_cron_timezone():
+    """schedule_config.timezone makes the cron expression tz-aware:
+    '0 9 * * *' in Europe/Berlin (CET, UTC+1) fires at 08:00 UTC."""
+    t = TriggerEntry(
+        id="t1", name="test", assistant_name="a", prompt="p",
+        schedule_type="cron",
+        schedule_config={"cron": "0 9 * * *", "timezone": "Europe/Berlin"},
+    )
+    base = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    result = _compute_next_run(t, base)
+    assert result == datetime(2025, 1, 2, 8, 0, 0, tzinfo=timezone.utc)
+
+
+def test_compute_next_run_cron_invalid_timezone_falls_back_to_utc():
+    t = TriggerEntry(
+        id="t1", name="test", assistant_name="a", prompt="p",
+        schedule_type="cron",
+        schedule_config={"cron": "0 9 * * *", "timezone": "Mars/Olympus"},
+    )
+    base = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    result = _compute_next_run(t, base)
     assert result == datetime(2025, 1, 2, 9, 0, 0, tzinfo=timezone.utc)
 
 
@@ -566,3 +596,97 @@ async def test_scheduler_rag_app_reference_updated_after_reload(fake_store):
     assert len(new_rag.calls) == 1
     assert new_rag.calls[0]["input_text"] == "prompt"
     assert fake_store.runs[0]["status"] == "success"
+
+
+# ------------------------------------------------------------------------------
+# Rescheduling / loop prevention
+# ------------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_cron_run_advances_next_run_into_the_future(fake_store, fake_rag):
+    """Regression: next_run_at must be computed from now, not from a stale
+    last_run_at/created_at base — otherwise the trigger stays due and
+    re-fires every tick."""
+    now = datetime.now(timezone.utc)
+    fake_store.triggers = [
+        TriggerEntry(
+            id="t1", name="cron-trigger", assistant_name="a", prompt="p",
+            schedule_type="cron", schedule_config={"cron": "* * * * *"},
+            next_run_at=now,
+            created_at=now - timedelta(hours=2),
+        )
+    ]
+    sched = TriggersScheduler(store=fake_store, rag_app=fake_rag, message_store=None)
+
+    await sched.check_and_run()
+
+    assert len(fake_rag.calls) == 1
+    assert fake_store.triggers[0].next_run_at > now
+
+
+@pytest.mark.asyncio
+async def test_trigger_does_not_refire_on_next_tick(fake_store, fake_rag):
+    """Regression (Dauerschleife): after a successful run the trigger must not
+    be due again on the following tick."""
+    now = datetime.now(timezone.utc)
+    fake_store.triggers = [
+        TriggerEntry(
+            id="t1", name="cron-trigger", assistant_name="a", prompt="p",
+            schedule_type="cron", schedule_config={"cron": "* * * * *"},
+            next_run_at=now,
+            created_at=now - timedelta(hours=2),
+        )
+    ]
+    sched = TriggersScheduler(store=fake_store, rag_app=fake_rag, message_store=None)
+
+    await sched.check_and_run()
+    await sched.check_and_run()
+
+    assert len(fake_rag.calls) == 1  # exactly one run, no catch-up firing
+
+
+@pytest.mark.asyncio
+async def test_failed_run_still_advances_next_run(fake_store):
+    """Regression: a failing trigger must not retry every tick forever."""
+    now = datetime.now(timezone.utc)
+    original_last_run = now - timedelta(hours=1)
+    fake_store.triggers = [
+        TriggerEntry(
+            id="t1", name="error-trigger", assistant_name="a", prompt="p",
+            schedule_type="interval", schedule_config={"minutes": 10},
+            next_run_at=now,
+            last_run_at=original_last_run,
+        )
+    ]
+    fake_rag = FakeRagApp(raise_error=RuntimeError("boom"))
+    sched = TriggersScheduler(store=fake_store, rag_app=fake_rag, message_store=None)
+
+    await sched.check_and_run()
+    await sched.check_and_run()
+
+    assert fake_store.runs[0]["status"] == "error"
+    assert len(fake_store.runs) == 1  # no immediate retry
+    assert fake_store.triggers[0].next_run_at > now
+    assert fake_store.triggers[0].last_run_at == original_last_run
+
+
+@pytest.mark.asyncio
+async def test_unschedulable_trigger_is_disabled(fake_store, fake_rag):
+    """Regression: an invalid schedule must disable the trigger instead of
+    looping on a next_run_at that stays NULL forever."""
+    now = datetime.now(timezone.utc)
+    fake_store.triggers = [
+        TriggerEntry(
+            id="t1", name="bad-cron", assistant_name="a", prompt="p",
+            schedule_type="cron", schedule_config={"cron": ""},
+            next_run_at=now,
+        )
+    ]
+    sched = TriggersScheduler(store=fake_store, rag_app=fake_rag, message_store=None)
+
+    await sched.check_and_run()
+
+    assert fake_rag.calls == []
+    assert fake_store.triggers[0].enabled is False
+    assert fake_store.runs[0]["status"] == "error"
+    assert "Unschedulable" in (fake_store.runs[0]["error_text"] or "")

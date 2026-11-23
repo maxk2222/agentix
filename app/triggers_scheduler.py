@@ -7,6 +7,7 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set
+from zoneinfo import ZoneInfo
 
 from croniter import croniter
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -92,7 +93,7 @@ class TriggersScheduler:
                 if not await self._threshold_reached(trigger):
                     # Not enough messages yet; just bump next_run_at
                     config = trigger.schedule_config or {}
-                    check_min = int(config.get("check_interval_minutes", 5))
+                    check_min = _positive_int(config.get("check_interval_minutes"), 5)
                     next_run = datetime.now(timezone.utc) + timedelta(minutes=check_min)
                     await self.store.update_next_run(trigger.id, next_run)
                     logger.debug(
@@ -104,6 +105,10 @@ class TriggersScheduler:
             self._running.add(trigger.id)
             self._running_since[trigger.id] = time.monotonic()
             try:
+                # Push next_run_at forward BEFORE running so a crash, a slow
+                # run or a failed run can never re-fire the same slot.
+                if not await self._advance_schedule(trigger):
+                    continue
                 await self._run_trigger(trigger)
             finally:
                 self._running.discard(trigger.id)
@@ -113,7 +118,7 @@ class TriggersScheduler:
         if not self.message_store or not trigger.watch_assistants:
             return True
         config = trigger.schedule_config or {}
-        threshold = int(config.get("message_threshold", 1))
+        threshold = _positive_int(config.get("message_threshold"), 1)
         since = trigger.last_run_at or trigger.created_at or datetime.min.replace(tzinfo=timezone.utc)
         count = await self.message_store.count_messages_for_assistants(
             assistant_names=trigger.watch_assistants,
@@ -124,6 +129,39 @@ class TriggersScheduler:
             trigger.id, count, threshold, since,
         )
         return count >= threshold
+
+    async def _advance_schedule(self, trigger: TriggerEntry) -> bool:
+        """Persist the next occurrence (computed from now) before a run.
+
+        Returns False when no future run can be computed — the trigger is then
+        disabled and an error run is recorded, instead of looping on a slot
+        that can never be satisfied.
+        """
+        next_run = _compute_next_run(trigger, datetime.now(timezone.utc))
+        if next_run is not None:
+            await self.store.update_next_run(trigger.id, next_run)
+            return True
+        logger.error(
+            "Trigger '%s' (%s) has no computable next run "
+            "(schedule_type=%s, config=%s) — disabling it.",
+            trigger.name, trigger.id, trigger.schedule_type,
+            trigger.schedule_config,
+        )
+        await self.store.set_enabled(trigger.id, False)
+        run_id = await self.store.create_run(
+            trigger_id=trigger.id,
+            status="pending",
+            conversation_id=f"trigger-{trigger.name}",
+        )
+        await self.store.finish_run(
+            run_id=run_id,
+            status="error",
+            error_text=(
+                f"Unschedulable {trigger.schedule_type} config "
+                f"{trigger.schedule_config!r} — trigger disabled"
+            ),
+        )
+        return False
 
     async def _run_trigger(self, trigger: TriggerEntry) -> None:
         logger.info("Running trigger '%s' (%s)", trigger.name, trigger.id)
@@ -290,13 +328,10 @@ class TriggersScheduler:
             await self.store.update_last_run(
                 trigger.id, datetime.now(timezone.utc)
             )
-            next_run = _compute_next_run(trigger)
-            await self.store.update_next_run(trigger.id, next_run)
             logger.info(
-                "Trigger '%s' finished with status=%s, next_run=%s",
+                "Trigger '%s' finished with status=%s",
                 trigger.name,
                 status,
-                next_run,
             )
 
         except asyncio.TimeoutError:
@@ -327,9 +362,22 @@ class TriggersScheduler:
         trigger = await self.store.get_trigger(trigger_id)
         if trigger is None:
             raise ValueError(f"Trigger {trigger_id} not found")
+        if trigger.id in self._running:
+            raise RuntimeError(f"Trigger {trigger_id} is already running")
         self._running.add(trigger.id)
         self._running_since[trigger.id] = time.monotonic()
         try:
+            # A manual run satisfies an overdue slot: advance the schedule so
+            # the next tick doesn't fire the same trigger a second time. A
+            # future next_run_at is left untouched.
+            next_run_at = trigger.next_run_at
+            if next_run_at is not None and next_run_at.tzinfo is None:
+                next_run_at = next_run_at.replace(tzinfo=timezone.utc)
+            if next_run_at is None or next_run_at <= datetime.now(timezone.utc):
+                if not await self._advance_schedule(trigger):
+                    raise RuntimeError(
+                        f"Trigger {trigger_id} has an unschedulable configuration"
+                    )
             await self._run_trigger(trigger)
         finally:
             self._running.discard(trigger.id)
@@ -339,34 +387,55 @@ class TriggersScheduler:
         return runs[0].id if runs else 0
 
 
+def _positive_int(value: Any, default: int) -> int:
+    """Coerce a config value to an int >= 1 (intervals, counts)."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return number if number >= 1 else default
+
+
 def _compute_next_run(trigger: TriggerEntry, base: Optional[datetime] = None) -> Optional[datetime]:
+    # The base is always "now": scheduling from last_run_at/created_at would
+    # produce slots in the past and re-fire the trigger in a loop.
     if base is None:
-        base = trigger.last_run_at or trigger.created_at or datetime.now(timezone.utc)
+        base = datetime.now(timezone.utc)
+    elif base.tzinfo is None:
+        base = base.replace(tzinfo=timezone.utc)
 
     if trigger.schedule_type == "interval":
         config = trigger.schedule_config or {}
-        minutes = int(config.get("minutes", 0))
-        hours = int(config.get("hours", 0))
-        days = int(config.get("days", 0))
+        try:
+            minutes = int(config.get("minutes", 0))
+            hours = int(config.get("hours", 0))
+            days = int(config.get("days", 0))
+        except (TypeError, ValueError):
+            return None
         delta = timedelta(minutes=minutes, hours=hours, days=days)
         if delta.total_seconds() <= 0:
             delta = timedelta(minutes=5)
         return base + delta
 
     if trigger.schedule_type == "cron":
-        cron_expr = trigger.schedule_config.get("cron", "")
+        config = trigger.schedule_config or {}
+        cron_expr = config.get("cron", "")
         if not cron_expr:
             return None
         try:
-            itr = croniter(cron_expr, base)
-            return itr.get_next(datetime)
+            tz = ZoneInfo(config.get("timezone") or "UTC")
+        except Exception:
+            tz = ZoneInfo("UTC")
+        try:
+            itr = croniter(cron_expr, base.astimezone(tz))
+            return itr.get_next(datetime).astimezone(timezone.utc)
         except Exception:
             logger.warning("Invalid cron expression for trigger %s: %s", trigger.id, cron_expr)
             return None
 
     if trigger.schedule_type == "message_threshold":
         config = trigger.schedule_config or {}
-        check_min = int(config.get("check_interval_minutes", 5))
+        check_min = _positive_int(config.get("check_interval_minutes"), 5)
         return base + timedelta(minutes=check_min)
 
     return None

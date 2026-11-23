@@ -11,6 +11,7 @@
   "dependencies": {
     "@mdxeditor/editor": "^4.0.2",
     "@xyflow/react": "^12.11.0",
+    "cron-parser": "^5.10.5",
     "lucide-react": "^0.460.0",
     "onnxruntime-web": "^1.20.1",
     "react": "^18.3.1",

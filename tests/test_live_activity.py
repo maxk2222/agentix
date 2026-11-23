@@ -204,7 +204,11 @@ def test_payload_chain_and_states():
 
 @pytest.mark.asyncio
 async def test_scheduler_running_now_tracks_and_cleans(monkeypatch):
-    store = SimpleNamespace(get_due_triggers=AsyncMock(return_value=[]))
+    store = SimpleNamespace(
+        get_due_triggers=AsyncMock(return_value=[]),
+        update_next_run=AsyncMock(),
+        set_enabled=AsyncMock(),
+    )
     scheduler = TriggersScheduler(store, rag_app=None)
     trigger = _FakeTrigger("t-1", "Nightly")
     seen_during_run: list[dict] = []
@@ -223,7 +227,11 @@ async def test_scheduler_running_now_tracks_and_cleans(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_scheduler_running_now_skips_duplicates():
-    store = SimpleNamespace(get_due_triggers=AsyncMock(return_value=[]))
+    store = SimpleNamespace(
+        get_due_triggers=AsyncMock(return_value=[]),
+        update_next_run=AsyncMock(),
+        set_enabled=AsyncMock(),
+    )
     scheduler = TriggersScheduler(store, rag_app=None)
     scheduler._running.add("t-1")
     scheduler._running_since["t-1"] = 0.0

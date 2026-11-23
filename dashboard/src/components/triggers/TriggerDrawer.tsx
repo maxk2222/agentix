@@ -10,6 +10,7 @@ import {
 import UnsavedChangesBar, { useUnsavedGuard } from '../UnsavedChangesBar'
 import SettingsDrawer from '../SettingsDrawer'
 import MultiSelect from '../MultiSelect'
+import { CronBuilder, BROWSER_TZ } from './CronBuilder'
 import { durationText, formatDateTime, isUnsaved } from './catalog'
 
 type TabId = 'settings' | 'schedule' | 'history'
@@ -63,7 +64,6 @@ export function TriggerDrawer({
   const isInterval = draft.schedule_type === 'interval'
   const isCron = draft.schedule_type === 'cron'
   const intervalConfig = (draft.schedule_config || {}) as Record<string, number>
-  const cronExpr = (draft.schedule_config?.cron as string) || ''
   const thresholdConfig = (draft.schedule_config || {}) as Record<string, number>
   const savedTrigger = !isUnsaved(trigger)
 
@@ -187,7 +187,7 @@ export function TriggerDrawer({
                   type === 'interval'
                     ? { minutes: 60 }
                     : type === 'cron'
-                      ? { cron: '0 9 * * *' }
+                      ? { cron: '0 9 * * *', timezone: BROWSER_TZ }
                       : { check_interval_minutes: 5, message_threshold: 1 }
                 setDraft((d) => ({ ...d, schedule_type: type, schedule_config: config }))
               }}
@@ -245,15 +245,13 @@ export function TriggerDrawer({
             </>
           ) : isCron ? (
             <div className="form-group wide">
-              <label>Cron {$t('triggers.cronExpression')}</label>
-              <input
-                type="text"
-                value={cronExpr}
-                onChange={(e) => update('schedule_config', { cron: e.target.value })}
+              <label>Cron</label>
+              <CronBuilder
+                value={draft.schedule_config || {}}
+                onChange={(cfg) => update('schedule_config', cfg)}
                 disabled={!canWrite}
-                placeholder="0 9 * * *"
+                $t={$t}
               />
-              <small className="field-help">e.g. 0 9 * * * = every day at 09:00</small>
             </div>
           ) : (
             <>
