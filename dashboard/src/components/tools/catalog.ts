@@ -7,7 +7,7 @@ export type ConfigField = {
   type:
     | 'text' | 'password' | 'number' | 'select' | 'toggle' | 'textarea'
     | 'json' | 'string_list' | 'cidr_list' | 'collections' | 'color'
-    | 'mcp_servers'
+    | 'mcp_servers' | 'provider' | 'provider_model'
   label: string
   default?: unknown
   secret?: boolean
@@ -18,13 +18,15 @@ export type ConfigField = {
   placeholder?: string
   help?: string
   group?: string
+  /** provider_model only: config key holding the provider id (default 'provider_id'). */
+  provider_key?: string
 }
 
 export const SECRET_SENTINEL = '__agentix_secret_set__'
 
 /** Category ids — labels live in i18n under tools.cat.<id>. */
 export type ToolCategoryId =
-  | 'knowledge' | 'web' | 'files' | 'comms' | 'internals' | 'mcp'
+  | 'knowledge' | 'web' | 'files' | 'media' | 'comms' | 'internals' | 'mcp'
   | 'custom' | 'assistants' | 'other'
 
 /** Same taxonomy as docs/tools.md. */
@@ -44,6 +46,8 @@ const NAME_CATEGORY: Record<string, ToolCategoryId> = {
   document_generator: 'files',
   agent_workspace: 'files',
   ssh_exec: 'files',
+  image_generate: 'media',
+  image_edit: 'media',
   email_sender: 'comms',
   email_reader: 'comms',
   google_calendar: 'comms',
@@ -61,7 +65,7 @@ const NAME_CATEGORY: Record<string, ToolCategoryId> = {
 }
 
 export const CATEGORY_ORDER: ToolCategoryId[] = [
-  'knowledge', 'web', 'files', 'comms', 'internals', 'mcp', 'custom',
+  'knowledge', 'web', 'files', 'media', 'comms', 'internals', 'mcp', 'custom',
   'assistants', 'other',
 ]
 

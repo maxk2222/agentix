@@ -27,6 +27,8 @@ _TOOL_ARG_LIMITS: Dict[str, Dict[str, Any]] = {
     "wait_subagent": {"subagent_ids": 50},
     "nudge_subagent": {"subagent_id": 64, "message": 20_000},
     "agent_todo": {"task_id": 20, "title": 500, "note": 4_000},
+    "image_generate": {"prompt": 32_000, "filename": 200, "n": 4, "size": 64, "quality": 64},
+    "image_edit": {"prompt": 32_000, "filename": 200, "n": 4, "size": 64, "image": 8},
 }
 
 # Maximum characters returned by any single tool call to the LLM

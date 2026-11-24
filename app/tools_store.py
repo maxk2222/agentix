@@ -1084,6 +1084,102 @@ class ToolsStore:
                 venv_config={},
                 runtime_mode="venv",
             ),
+            ToolEntry(
+                id="builtin-image_generate",
+                name="image_generate",
+                description="Generate image(s) from a text prompt via the configured OpenAI-compatible /v1/images endpoint. Results appear as preview cards in the chat.",
+                enabled=True,
+                kind="builtin",
+                tool_schema={
+                    "type": "function",
+                    "function": {
+                        "name": "image_generate",
+                        "description": (
+                            "Generate image file(s) from a text prompt using the configured image "
+                            "endpoint (OpenAI-compatible /v1/images API). The finished image is "
+                            "attached to the chat as a downloadable preview card."
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "prompt": {"type": "string", "description": "Text description of the image to generate."},
+                                "n": {"type": "integer", "description": "Number of images (1-4, default 1).", "default": 1},
+                                "size": {"type": "string", "description": "Image size, e.g. '1024x1024' — model-dependent."},
+                                "quality": {"type": "string", "description": "Quality tier — model-dependent."},
+                                "filename": {"type": "string", "description": "Optional output filename."},
+                                "workspace_path": {"type": "string", "description": "Optional agent-workspace path for a copy."},
+                            },
+                            "required": ["prompt"],
+                        },
+                    },
+                },
+                config={
+                    "provider_id": "",
+                    "model": "",
+                    "size": "",
+                    "quality": "",
+                    "n": 1,
+                    "output_format": "",
+                    "background": "",
+                    "timeout_seconds": 300,
+                    "return_images": False,
+                    "extra_body": {},
+                },
+                code=None,
+                venv_config={},
+                runtime_mode="venv",
+            ),
+            ToolEntry(
+                id="builtin-image_edit",
+                name="image_edit",
+                description="Edit or transform existing image(s) (chat uploads, artifacts, workspace files, URLs, data URIs) with a prompt via the configured OpenAI-compatible /v1/images/edits endpoint. Results appear as preview cards in the chat.",
+                enabled=True,
+                kind="builtin",
+                tool_schema={
+                    "type": "function",
+                    "function": {
+                        "name": "image_edit",
+                        "description": (
+                            "Edit or transform existing image(s) with a text prompt using the "
+                            "configured image endpoint (OpenAI-compatible /v1/images/edits API). "
+                            "The result is attached to the chat as a downloadable preview card."
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "image": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Source image(s): attachment:/upload:, artifact:, workspace:/file:, https://, data: or a bare filename.",
+                                },
+                                "prompt": {"type": "string", "description": "Text description of the desired edit."},
+                                "mask": {"type": "string", "description": "Optional mask image (same source syntax)."},
+                                "n": {"type": "integer", "description": "Number of edit variants (1-4, default 1).", "default": 1},
+                                "size": {"type": "string", "description": "Output size — model-dependent."},
+                                "filename": {"type": "string", "description": "Optional output filename."},
+                                "workspace_path": {"type": "string", "description": "Optional agent-workspace path for a copy."},
+                            },
+                            "required": ["image", "prompt"],
+                        },
+                    },
+                },
+                config={
+                    "provider_id": "",
+                    "model": "",
+                    "size": "",
+                    "n": 1,
+                    "output_format": "",
+                    "background": "",
+                    "timeout_seconds": 300,
+                    "return_images": False,
+                    "extra_body": {},
+                    "allowed_hosts": [],
+                    "allow_private_ips": True,
+                },
+                code=None,
+                venv_config={},
+                runtime_mode="venv",
+            ),
         ]
         for tool in builtins:
             existing = await self.get_tool_by_name(tool.name)

@@ -49,6 +49,16 @@ flowchart LR
 | `document_generator` | DOCX/PPTX/PDF artifacts with themes, charts, tables — incremental drafts via `create`→`add_*`→`finalize`, plus `edit` for ordered item ops (replace/insert/remove/move, all-or-nothing); `workspace_path` also drops a copy into the agent workspace; `deliver=false` keeps the file internal (no chat card, `action='publish'` attaches later); reusing a filename updates the existing card in place | LibreOffice in the image (`LIBREOFFICE_PATH`/`SOFFICE_PATH`) |
 | `ssh_exec` | Shell commands on preconfigured remote hosts | host/credential settings in the Tools page |
 
+## Media & images
+
+| Tool | Purpose | Config |
+|---|---|---|
+| `image_generate` | Generate images via any OpenAI-compatible `POST /v1/images/generations` endpoint; saves results as chat artifacts (inline preview) and optionally writes a copy into the agent workspace (`workspace_path`, same-target calls serialize) | `provider_id` + `model` (required) — pick a configured LLM provider; `size`, `quality`, `n` (1–4), `output_format`, `background`, `timeout_seconds`, `extra_body`, `return_images` (feed the image back to the model — vision models only) |
+| `image_edit` | Edit/combine images via `POST /v1/images/edits` (multipart, `image[]` for several sources, optional `mask`); sources resolve from `artifact:name` (generated files), `attachment:name` (chat uploads), `workspace:path` (agent workspace), `https?://` URLs or `data:` URIs — bare names fall back artifact→attachment→workspace | same endpoint config as `image_generate` plus `allowed_hosts` (fnmatch list for URL sources) and `allow_private_ips` (default on — set off for internet-facing endpoints) |
+
+> [!note]
+> Endpoint resolution order: tool/assistant-config `provider_id` → `IMAGE_PROVIDER_ID` env → the default LLM provider → env `LLM_API_BASE`/`LLM_API_KEY`. Model: config `model` → `IMAGE_MODEL` env. Content leaves the host — assign to trusted assistants.
+
 ## Communication
 
 | Tool | Purpose | Config |

@@ -201,6 +201,16 @@ class RAGApplication:
             "email_sender",
             EmailSenderTool(Path(config.data_dir) / "artifacts"),
         )
+        from agent.tools.builtin_tools.image_generate import ImageGenerateTool
+        from agent.tools.builtin_tools.image_edit import ImageEditTool
+        self._tool_registry.register_builtin(
+            "image_generate",
+            ImageGenerateTool(self),
+        )
+        self._tool_registry.register_builtin(
+            "image_edit",
+            ImageEditTool(self),
+        )
         from app.agent_workspace import AgentWorkspaceStore
         self._agent_workspace_store = AgentWorkspaceStore()
         from app.chat_attachments import ChatAttachmentStore

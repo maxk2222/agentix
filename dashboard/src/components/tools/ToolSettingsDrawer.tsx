@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { knowledge, tools as toolsApi, type ToolEntry } from '../../api/client'
+import {
+  knowledge, providers as providersApi, tools as toolsApi,
+  type ProviderEntry, type ToolEntry,
+} from '../../api/client'
 import UnsavedChangesBar, { useUnsavedGuard } from '../UnsavedChangesBar'
 import SettingsDrawer from '../SettingsDrawer'
 import AlertModal from '../AlertModal'
@@ -28,12 +31,17 @@ export function ToolSettingsDrawer({
   const [notice, setNotice] = useState<{ message: string; danger?: boolean } | null>(null)
   const [collections, setCollections] = useState<string[]>([])
   const [collectionsLoading, setCollectionsLoading] = useState(false)
+  const [providerOptions, setProviderOptions] = useState<ProviderEntry[] | null>(null)
+  const [providersLoading, setProvidersLoading] = useState(false)
 
   const schema = (tool.config_schema as ConfigField[] | null | undefined) ?? []
   const isBuiltin = draft.kind === 'builtin'
   const isCustom = draft.kind === 'custom'
   const isAssistant = draft.kind === 'assistant'
   const needsCollections = schema.some((f) => f.type === 'collections')
+  const needsProviders = schema.some(
+    (f) => f.type === 'provider' || f.type === 'provider_model',
+  )
 
   useEffect(() => {
     if (!needsCollections) return
@@ -43,6 +51,15 @@ export function ToolSettingsDrawer({
       .catch(() => setCollections([]))
       .finally(() => setCollectionsLoading(false))
   }, [needsCollections])
+
+  useEffect(() => {
+    if (!needsProviders) return
+    setProvidersLoading(true)
+    providersApi.list()
+      .then((p) => setProviderOptions(p))
+      .catch(() => setProviderOptions(null))
+      .finally(() => setProvidersLoading(false))
+  }, [needsProviders])
 
   const update = <K extends keyof ToolEntry>(field: K, value: ToolEntry[K]) =>
     setDraft((d) => ({ ...d, [field]: value }))
@@ -144,6 +161,8 @@ export function ToolSettingsDrawer({
             canWrite={canWrite}
             collections={collections}
             collectionsLoading={collectionsLoading}
+            providers={providerOptions}
+            providersLoading={providersLoading}
             tool={draft}
             $t={$t}
           />

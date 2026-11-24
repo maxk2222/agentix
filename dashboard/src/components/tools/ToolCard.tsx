@@ -1,6 +1,6 @@
 import {
-  AlertTriangle, BookOpen, Copy, Cpu, FileCode2, Globe, Mail,
-  Plug, Trash2, Wrench, Workflow, type LucideIcon,
+  AlertTriangle, BookOpen, Copy, Cpu, FileCode2, Globe, Image as ImageIcon,
+  Mail, Plug, Trash2, Wrench, Workflow, type LucideIcon,
 } from 'lucide-react'
 import type { ToolEntry } from '../../api/client'
 import { categoryFor, configuredCount, needsConfig, type ToolCategoryId } from './catalog'
@@ -11,6 +11,7 @@ const CATEGORY_ICON: Record<ToolCategoryId, LucideIcon> = {
   knowledge: BookOpen,
   web: Globe,
   files: FileCode2,
+  media: ImageIcon,
   comms: Mail,
   internals: Cpu,
   mcp: Plug,

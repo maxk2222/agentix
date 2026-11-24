@@ -10559,6 +10559,7 @@ tr:hover .conv-copy-btn,
 .entity-icon.cat-web { background: #e0f2fe; color: #0369a1; }
 .entity-icon.cat-knowledge { background: #ede9fe; color: #6d28d9; }
 .entity-icon.cat-files { background: #dcfce7; color: #15803d; }
+.entity-icon.cat-media { background: #fae8ff; color: #a21caf; }
 .entity-icon.cat-comms { background: #fef3c7; color: #b45309; }
 .entity-icon.cat-internals { background: #e0e7ff; color: #4338ca; }
 .entity-icon.cat-mcp { background: #cffafe; color: #0e7490; }
@@ -10569,6 +10570,7 @@ tr:hover .conv-copy-btn,
 [data-theme="dark"] .entity-icon.cat-web { background: rgba(3,105,161,0.25); color: #7dd3fc; }
 [data-theme="dark"] .entity-icon.cat-knowledge { background: rgba(109,40,217,0.25); color: #c4b5fd; }
 [data-theme="dark"] .entity-icon.cat-files { background: rgba(21,128,61,0.25); color: #86efac; }
+[data-theme="dark"] .entity-icon.cat-media { background: rgba(162,28,175,0.25); color: #f0abfc; }
 [data-theme="dark"] .entity-icon.cat-comms { background: rgba(180,83,9,0.25); color: #fcd34d; }
 [data-theme="dark"] .entity-icon.cat-internals { background: rgba(67,56,202,0.28); color: #a5b4fc; }
 [data-theme="dark"] .entity-icon.cat-mcp { background: rgba(14,116,144,0.28); color: #67e8f9; }

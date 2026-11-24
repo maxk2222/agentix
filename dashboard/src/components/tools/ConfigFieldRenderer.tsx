@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Plus, X } from 'lucide-react'
-import type { ToolEntry } from '../../api/client'
+import { providers as providersApi, type ProviderEntry, type ToolEntry } from '../../api/client'
 import {
   configGet, configSet, isValidCidr,
   SECRET_SENTINEL, type ConfigField,
@@ -139,6 +139,57 @@ function StringListEditor({
 }
 
 /* ------------------------------------------------------------------ */
+/* ProviderModelInput — text input with live model suggestions          */
+/* ------------------------------------------------------------------ */
+function ProviderModelInput({
+  value,
+  providerId,
+  onChange,
+  disabled,
+  placeholder,
+}: {
+  value: string
+  providerId: string
+  onChange: (v: string) => void
+  disabled: boolean
+  placeholder?: string
+}) {
+  const [models, setModels] = useState<string[]>([])
+  const pid = providerId.trim()
+  // 'env-default' has no /check endpoint (synthetic row) — skip the fetch.
+  const canFetch = pid !== '' && pid !== 'env-default'
+
+  useEffect(() => {
+    setModels([])
+    if (!canFetch) return
+    let cancelled = false
+    providersApi.check(pid)
+      .then((r) => { if (!cancelled) setModels(r.models || []) })
+      .catch(() => { /* no providers:check permission or unreachable — plain input */ })
+    return () => { cancelled = true }
+  }, [pid, canFetch])
+
+  const listId = `pm-${pid || 'default'}`
+  return (
+    <>
+      <input
+        type="text"
+        list={models.length > 0 ? listId : undefined}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        disabled={disabled}
+      />
+      {models.length > 0 && (
+        <datalist id={listId}>
+          {models.map((m) => <option key={m} value={m} />)}
+        </datalist>
+      )}
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /* ConfigFieldRenderer — schema-driven settings form                    */
 /* ------------------------------------------------------------------ */
 export function ConfigFieldRenderer({
@@ -148,6 +199,8 @@ export function ConfigFieldRenderer({
   canWrite,
   collections,
   collectionsLoading,
+  providers,
+  providersLoading,
   tool,
   $t,
 }: {
@@ -157,6 +210,8 @@ export function ConfigFieldRenderer({
   canWrite: boolean
   collections: string[]
   collectionsLoading: boolean
+  providers?: ProviderEntry[] | null
+  providersLoading?: boolean
   tool: ToolEntry
   $t: (key: string) => string
 }) {
@@ -309,6 +364,54 @@ export function ConfigFieldRenderer({
             selected={list}
             onChange={(v) => setVal(f.key, v)}
             disabled={disabled}
+          />
+        )
+      }
+      case 'provider': {
+        if (providersLoading) return <span className="text-muted">Loading providers…</span>
+        if (providers == null) {
+          // providers:read missing or fetch failed — stay editable via text.
+          return (
+            <input
+              type="text"
+              value={String(raw ?? '')}
+              placeholder={f.placeholder ?? 'provider id (empty = default)'}
+              onChange={(e) => setVal(f.key, e.target.value)}
+              disabled={disabled}
+            />
+          )
+        }
+        const current = String(raw ?? '')
+        const options = providers.map((p) => ({
+          value: p.id,
+          label: `${p.name}${p.is_default ? ' (default)' : ''}${p.enabled ? '' : ' — disabled'}`,
+        }))
+        if (current && !options.some((o) => o.value === current)) {
+          options.push({ value: current, label: `${current} (unknown)` })
+        }
+        return (
+          <select
+            value={current}
+            onChange={(e) => setVal(f.key, e.target.value)}
+            disabled={disabled}
+          >
+            <option value="">— default provider —</option>
+            {options.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        )
+      }
+      case 'provider_model': {
+        const providerKey = f.provider_key || 'provider_id'
+        const pid = String(configGet(config, providerKey) ?? '')
+        return (
+          <ProviderModelInput
+            value={String(raw ?? '')}
+            providerId={pid}
+            onChange={(v) => setVal(f.key, v)}
+            disabled={disabled}
+            placeholder={f.placeholder}
           />
         )
       }
