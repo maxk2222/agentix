@@ -16,32 +16,11 @@ import {
   X,
   ExternalLink,
   Save,
-  Code,
-  Eye,
   FilePlus,
   RefreshCw,
   Globe,
 } from 'lucide-react'
-import {
-  MDXEditor,
-  headingsPlugin,
-  listsPlugin,
-  quotePlugin,
-  thematicBreakPlugin,
-  markdownShortcutPlugin,
-  linkPlugin,
-  tablePlugin,
-  codeBlockPlugin,
-  toolbarPlugin,
-  UndoRedo,
-  BoldItalicUnderlineToggles,
-  InsertCodeBlock,
-  InsertThematicBreak,
-  ListsToggle,
-  BlockTypeSelect,
-  CreateLink,
-} from '@mdxeditor/editor'
-import '@mdxeditor/editor/style.css'
+import MarkdownEditor from './MarkdownEditor'
 import { useAuth } from '../api/AuthContext'
 import { useAppPreferences } from '../ui/AppPreferences'
 import { useT } from '../i18n'
@@ -602,33 +581,23 @@ function TextEditorModal({
   const { language } = useAppPreferences()
   const $t = useT(language)
   const [content, setContent] = useState('')
-  const [mode, setMode] = useState<'rich' | 'code'>('rich')
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(false)
-  const editorRef = useRef<any>(null)
   const isTextFile = file?.isTextFile ?? false
 
   useEffect(() => {
     if (!file) return
-    setMode(isTextFile ? 'rich' : 'code')
     if (file.isNew) {
       setContent('')
-      editorRef.current?.setMarkdown('')
       return
     }
     setLoading(true)
     knowledge
       .readText(file.collection, file.filename)
-      .then((res) => {
-        setContent(res.content)
-        editorRef.current?.setMarkdown(res.content)
-      })
-      .catch(() => {
-        setContent('')
-        editorRef.current?.setMarkdown('')
-      })
+      .then((res) => setContent(res.content))
+      .catch(() => setContent(''))
       .finally(() => setLoading(false))
-  }, [file, isTextFile])
+  }, [file])
 
   if (!file) return null
 
@@ -647,24 +616,6 @@ function TextEditorModal({
         <div className="editor-header">
           <h4>{file.filename}</h4>
           <div className="editor-header-actions">
-            {isTextFile && (
-              <div className="editor-mode-toggle">
-                <button
-                  className={mode === 'rich' ? 'active' : ''}
-                  onClick={() => setMode('rich')}
-                  title="Rich Text"
-                >
-                  <Eye size={14} />
-                </button>
-                <button
-                  className={mode === 'code' ? 'active' : ''}
-                  onClick={() => setMode('code')}
-                  title="Markdown"
-                >
-                  <Code size={14} />
-                </button>
-              </div>
-            )}
             {canWrite && (
               <button
                 className="btn-primary"
@@ -683,34 +634,12 @@ function TextEditorModal({
         <div className="editor-body">
           {loading ? (
             <div className="loading">{$t('knowledge.loadingShort')}</div>
-          ) : isTextFile && mode === 'rich' ? (
-            <MDXEditor
-              ref={editorRef}
-              markdown={content}
-              onChange={(md) => setContent(md)}
-              plugins={[
-                headingsPlugin(),
-                listsPlugin(),
-                quotePlugin(),
-                thematicBreakPlugin(),
-                markdownShortcutPlugin(),
-                linkPlugin(),
-                tablePlugin(),
-                codeBlockPlugin(),
-                toolbarPlugin({
-                  toolbarContents: () => (
-                    <>
-                      <UndoRedo />
-                      <BlockTypeSelect />
-                      <BoldItalicUnderlineToggles />
-                      <ListsToggle />
-                      <CreateLink />
-                      <InsertCodeBlock />
-                      <InsertThematicBreak />
-                    </>
-                  ),
-                }),
-              ]}
+          ) : isTextFile ? (
+            <MarkdownEditor
+              key={`${file.collection}/${file.filename}${file.isNew ? ':new' : ''}`}
+              value={content}
+              onChange={setContent}
+              disabled={!canWrite}
             />
           ) : (
             <textarea

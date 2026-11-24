@@ -31,31 +31,10 @@ import {
   Search,
   Wrench,
   Copy,
-  Eye,
-  Code,
   GitCompare,
   History,
 } from 'lucide-react'
-import {
-  MDXEditor,
-  headingsPlugin,
-  listsPlugin,
-  quotePlugin,
-  thematicBreakPlugin,
-  markdownShortcutPlugin,
-  linkPlugin,
-  tablePlugin,
-  codeBlockPlugin,
-  toolbarPlugin,
-  UndoRedo,
-  BoldItalicUnderlineToggles,
-  BlockTypeSelect,
-  ListsToggle,
-  CreateLink,
-  InsertCodeBlock,
-  InsertThematicBreak,
-} from '@mdxeditor/editor'
-import '@mdxeditor/editor/style.css'
+import MarkdownEditor from './MarkdownEditor'
 import { useAuth } from '../api/AuthContext'
 import { useData } from '../api/DataContext'
 import { useAppPreferences } from '../ui/AppPreferences'
@@ -530,113 +509,7 @@ function ToolAddDropdown({
   )
 }
 
-/* ------------------------------------------------------------------ */
-/* InlineMarkdownEditor                                               */
-/* ------------------------------------------------------------------ */
-function InlineMarkdownEditor({
-  value,
-  onChange,
-  placeholder,
-  disabled = false,
-}: {
-  value: string
-  onChange: (value: string) => void
-  placeholder?: string
-  disabled?: boolean
-}) {
-  // MDX parses bare "{" as JSX expressions ({{context}} placeholders, unfenced
-  // JSON), and the rich-mode round-trip silently drops them — so any content
-  // with braces outside fenced/inline code edits must stay in the lossless
-  // code view.
-  const bracesOutsideCode = (md: string) =>
-    /[{]/.test(md.replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]*`/g, ''))
-  const [mode, setMode] = useState<'rich' | 'code'>(() => (bracesOutsideCode(value) ? 'code' : 'rich'))
-  const [markdown, setMarkdown] = useState(value)
-  const editorRef = useRef<any>(null)
-  const lastValueRef = useRef(value)
 
-  useEffect(() => {
-    if (value !== lastValueRef.current) {
-      lastValueRef.current = value
-      setMarkdown(value)
-      if (bracesOutsideCode(value)) {
-        setMode('code')
-      } else {
-        editorRef.current?.setMarkdown(value)
-      }
-    }
-  }, [value])
-
-  return (
-    <div className="inline-markdown-editor" style={{ opacity: disabled ? 0.6 : 1 }}>
-      {!disabled && (
-        <div className="editor-mode-toggle">
-          <button
-            className={mode === 'rich' ? 'active' : ''}
-            onClick={() => setMode('rich')}
-            disabled={bracesOutsideCode(markdown)}
-            title={bracesOutsideCode(markdown) ? 'Rich text is unavailable for content with {…} placeholders' : 'Rich Text'}
-          >
-            <Eye size={14} />
-          </button>
-          <button
-            className={mode === 'code' ? 'active' : ''}
-            onClick={() => setMode('code')}
-            title="Markdown"
-          >
-            <Code size={14} />
-          </button>
-        </div>
-      )}
-      {mode === 'rich' && !disabled ? (
-        <MDXEditor
-          ref={editorRef}
-          markdown={markdown}
-          onChange={(md) => {
-            setMarkdown(md)
-            onChange(md)
-          }}
-          plugins={[
-            headingsPlugin(),
-            listsPlugin(),
-            quotePlugin(),
-            thematicBreakPlugin(),
-            markdownShortcutPlugin(),
-            linkPlugin(),
-            tablePlugin(),
-            codeBlockPlugin(),
-            toolbarPlugin({
-              toolbarContents: () => (
-                <>
-                  <UndoRedo />
-                  <BlockTypeSelect />
-                  <BoldItalicUnderlineToggles />
-                  <ListsToggle />
-                  <CreateLink />
-                  <InsertCodeBlock />
-                  <InsertThematicBreak />
-                </>
-              ),
-            }),
-          ]}
-        />
-      ) : (
-        <textarea
-          className="editor-textarea"
-          value={markdown}
-          onChange={(e) => {
-            if (disabled) return
-            setMarkdown(e.target.value)
-            onChange(e.target.value)
-          }}
-          placeholder={placeholder}
-          spellCheck={false}
-          readOnly={disabled}
-        />
-      )}
-    </div>
-  )
-}
 
 /* ------------------------------------------------------------------ */
 /* Model-aware reasoning controls                                       */
@@ -2521,7 +2394,7 @@ export default function ConfigEditor() {
                   {aTab === 'basis' && (<>
                     <div className="form-group wide">
                       <label>System Instructions *</label>
-                      <InlineMarkdownEditor
+                      <MarkdownEditor
                         value={assistant.system_instructions}
                         onChange={(md) =>
                           updateAssistant(idx, {
