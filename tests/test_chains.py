@@ -855,8 +855,22 @@ async def test_provider_options_wired_into_client(tmp_path):
         await builder._get_llm_for_assistant("A", streaming=False)
         kwargs = mock_llm.call_args.kwargs
         assert kwargs["default_headers"] == {"X-Team": "research"}
-        assert kwargs["request_timeout"] == 45
+        # 45s is below the 900s agent-turn floor — the floor wins.
+        assert kwargs["request_timeout"] == 900
         assert kwargs["max_retries"] == 9
+
+
+@pytest.mark.asyncio
+async def test_provider_timeout_above_floor_is_used(tmp_path):
+    """A provider timeout above the 900s floor is honoured verbatim."""
+    instructions = {"A": {"model": "m", "provider_id": "p1", "system_instructions": "x"}}
+    provider = _FakeProvider("p1", timeout_seconds=1500)
+    store = _FakeEndpointStore(providers=[provider])
+    builder = _make_builder_with_instructions(tmp_path, instructions, store)
+
+    with patch("agent.chains.ChatOpenAIWithReasoning") as mock_llm:
+        await builder._get_llm_for_assistant("A", streaming=False)
+        assert mock_llm.call_args.kwargs["request_timeout"] == 1500
 
 
 @pytest.mark.asyncio

@@ -2597,7 +2597,7 @@ class ProviderPayload(BaseModel):
     enabled: bool = True
     is_default: bool = False
     provider_type: str = "openai-compatible"
-    timeout_seconds: int = 30
+    timeout_seconds: int = 900
     max_retries: int = 3
     extra_headers: Optional[Dict[str, str]] = None
     supports_native_tool_calls: Optional[bool] = None
@@ -2663,6 +2663,8 @@ _EDITABLE_CONFIG_KEYS = {
     "user_agent",
     "stream_idle_timeout_seconds",
     "run_idle_timeout_seconds",
+    "agent_max_tokens_per_turn",
+    "max_tool_output_chars",
     "retriever_timeout_seconds",
     # Logging
     "log_level",
@@ -2877,14 +2879,28 @@ _CONFIG_DESCRIPTIONS: Dict[str, Dict[str, Any]] = {
         "label": "Stream Idle Timeout",
         "description": "Seconds without a token from an in-flight LLM stream before that call is aborted (per model call inside a run).",
         "type": "float",
-        "default": 300.0,
+        "default": 900.0,
         "category": "Runtime & API",
     },
     "run_idle_timeout_seconds": {
         "label": "Run Idle Timeout",
         "description": "Seconds without real stream activity (token, reasoning, tool or subagent event) before a run is aborted; synthetic tool keepalives do not count. No fixed total-run limit. Should stay above the sandbox install+exec budgets so healthy code_execution jobs fit one silent window.",
         "type": "float",
-        "default": 900.0,
+        "default": 3600.0,
+        "category": "Runtime & API",
+    },
+    "agent_max_tokens_per_turn": {
+        "label": "Agent Max Tokens Per Turn",
+        "description": "Hard output cap per agent LLM turn — a degenerate generation (repetition loop inside a buffered tool_call) ends at finish_reason=length instead of running to the model context limit. 0 disables.",
+        "type": "int",
+        "default": 32768,
+        "category": "Runtime & API",
+    },
+    "max_tool_output_chars": {
+        "label": "Max Tool Output Chars",
+        "description": "Hard cap on a single tool result's size in the LLM context — oversized outputs are truncated with a marker so runaway tool output cannot blow the context window.",
+        "type": "int",
+        "default": 32768,
         "category": "Runtime & API",
     },
     "retriever_timeout_seconds": {
@@ -3816,7 +3832,7 @@ async def list_providers(request: Request) -> list[dict]:
             "enabled": True,
             "is_default": not has_db_default,
             "provider_type": "openai-compatible",
-            "timeout_seconds": 30,
+            "timeout_seconds": 900,
             "max_retries": 3,
             "extra_headers": None,
             "last_checked_at": None,

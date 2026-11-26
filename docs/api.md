@@ -158,7 +158,7 @@ Session-cookie auth (`POST /admin/auth/login`); every endpoint checks `require_p
 | `POST`/`GET` | `/admin/agent-chains/validate` · `{id}/export` · `/import` |
 | `GET`/`POST` | `/admin/triggers` |
 | `GET`/`PUT`/`DELETE` | `/admin/triggers/{id}` |
-| `POST`/`GET` | `/admin/triggers/{id}/run` · `{id}/runs` |
+| `POST`/`GET` | `/admin/triggers/{id}/run` · `{id}/cancel` · `{id}/runs` |
 
 ### Users & public chat
 

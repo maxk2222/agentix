@@ -11,12 +11,15 @@ import asyncio
 import time
 from typing import Any, AsyncIterator
 
-DEFAULT_STREAM_IDLE_SECONDS = 300.0
+# Sized above a realistic single-turn silence window: buffered tool-call
+# generations on a ~40 tok/s decoder can stay silent for 10+ minutes.
+DEFAULT_STREAM_IDLE_SECONDS = 900.0
 # Run-level watchdog: aborts a run when no *real* stream item (token, reasoning,
 # tool/subagent event) arrives for this long — synthetic tool keepalives do not
 # count. Sized above the sandbox budgets so a healthy code_execution
-# (install ~240s + exec ~600s) fits inside one silent window.
-DEFAULT_RUN_IDLE_SECONDS = 900.0
+# (install ~240s + exec ~600s) fits inside one silent window, with headroom
+# for several back-to-back buffered LLM turns.
+DEFAULT_RUN_IDLE_SECONDS = 3600.0
 
 
 class StreamIdleTimeout(Exception):

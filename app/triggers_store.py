@@ -32,7 +32,7 @@ class TriggerEntry:
     watch_assistants: List[str] = field(default_factory=list)
     target_type: str = "assistant"  # "assistant" | "chain"
     target_name: str = ""
-    timeout_seconds: int = 600
+    timeout_seconds: int = 14400
     last_run_at: Optional[datetime] = None
     next_run_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
@@ -45,7 +45,7 @@ class TriggerRunEntry:
     trigger_id: str
     started_at: datetime
     finished_at: Optional[datetime] = None
-    status: str = "pending"  # pending | success | error
+    status: str = "pending"  # pending | success | error | cancelled | interrupted
     result_text: Optional[str] = None
     error_text: Optional[str] = None
     conversation_id: Optional[str] = None
@@ -79,7 +79,7 @@ class TriggersStore:
                         watch_assistants JSONB NOT NULL DEFAULT '[]',
                         target_type TEXT NOT NULL DEFAULT 'assistant',
                         target_name TEXT NOT NULL DEFAULT '',
-                        timeout_seconds INTEGER NOT NULL DEFAULT 600,
+                        timeout_seconds INTEGER NOT NULL DEFAULT 14400,
                         last_run_at TIMESTAMPTZ,
                         next_run_at TIMESTAMPTZ,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -107,7 +107,7 @@ class TriggersStore:
                     ADD COLUMN IF NOT EXISTS watch_assistants JSONB NOT NULL DEFAULT '[]',
                     ADD COLUMN IF NOT EXISTS target_type TEXT NOT NULL DEFAULT 'assistant',
                     ADD COLUMN IF NOT EXISTS target_name TEXT NOT NULL DEFAULT '',
-                    ADD COLUMN IF NOT EXISTS timeout_seconds INTEGER NOT NULL DEFAULT 600
+                    ADD COLUMN IF NOT EXISTS timeout_seconds INTEGER NOT NULL DEFAULT 14400
                     """
                 )
             )
@@ -377,6 +377,28 @@ class TriggersStore:
                 },
             )
 
+    async def mark_stale_pending_interrupted(self) -> int:
+        """Close every still-'pending' run row as 'interrupted'.
+
+        Called at scheduler start: any pending row at that point belongs to a
+        crashed or restarted process — no live task can ever finish it.
+        Returns the number of rows swept.
+        """
+        await self.ensure_tables()
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    f"""
+                    UPDATE {TRIGGER_RUNS_TABLE}
+                    SET finished_at = NOW(),
+                        status = 'interrupted',
+                        error_text = 'Interrupted: service restarted'
+                    WHERE status = 'pending' AND finished_at IS NULL
+                    """
+                )
+            )
+            return int(result.rowcount or 0)
+
     async def list_runs(
         self, trigger_id: str, limit: int = 50, status: Optional[str] = None, sort_order: str = "desc"
     ) -> List[TriggerRunEntry]:
@@ -474,7 +496,7 @@ def _row_to_trigger(row) -> TriggerEntry:
         watch_assistants=watch_assistants,
         target_type=str(row.get("target_type", "assistant")),
         target_name=str(row.get("target_name", "")),
-        timeout_seconds=int(row.get("timeout_seconds", 600) or 600),
+        timeout_seconds=int(row.get("timeout_seconds", 14400) or 14400),
         last_run_at=row["last_run_at"],
         next_run_at=row["next_run_at"],
         created_at=row["created_at"],

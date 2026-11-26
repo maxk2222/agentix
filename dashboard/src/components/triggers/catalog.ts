@@ -36,7 +36,7 @@ export function toPayload(draft: TriggerEntry): TriggerCreatePayload {
     watch_assistants: draft.watch_assistants,
     target_type: draft.target_type || 'assistant',
     target_name: target,
-    timeout_seconds: draft.timeout_seconds ?? 600,
+    timeout_seconds: draft.timeout_seconds ?? 14400,
   }
 }
 

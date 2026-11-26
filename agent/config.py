@@ -89,18 +89,37 @@ class AppConfig(BaseSettings):
     user_agent: str = Field(default="Agentix-RAG/1.0", alias="USER_AGENT")
     # LLM token-level watchdog: abort an LLM stream when no token arrives for
     # this long mid-flight. Applies to each model call inside an agent run.
+    # Sized above a realistic single-turn silence window: buffered tool-call
+    # generations on a ~40 tok/s decoder can stay silent for 10+ minutes.
     stream_idle_timeout_seconds: float = Field(
-        default=300.0,
+        default=900.0,
         validation_alias=AliasChoices("STREAM_IDLE_TIMEOUT_SECONDS", "STREAMING_TIMEOUT_SECONDS"),
     )
     # Run-level watchdog: abort a chat/agent run after this many seconds
     # without a *real* stream item (token, reasoning, tool or subagent event).
     # Synthetic tool keepalives do not count. No fixed total-run limit — a
     # working run may take as long as it needs. Should stay above the sandbox
-    # budgets (install + exec) so a healthy code_execution fits one window.
+    # budgets (install + exec) so a healthy code_execution fits one window,
+    # with headroom for several back-to-back buffered LLM turns.
     run_idle_timeout_seconds: float = Field(
-        default=900.0,
+        default=3600.0,
         validation_alias=AliasChoices("RUN_IDLE_TIMEOUT_SECONDS"),
+    )
+    # Hard per-turn output cap for agent LLM calls: a degenerate generation
+    # (repetition loop inside a buffered tool_call) would otherwise run until
+    # the model context limit — ~100 min at ~40 tok/s — while every activity
+    # watchdog stays happy because tokens keep flowing. finish_reason=length
+    # triggers the runner's existing retry path. 0 disables the cap.
+    agent_max_tokens_per_turn: int = Field(
+        default=32_768,
+        validation_alias=AliasChoices("AGENT_MAX_TOKENS_PER_TURN"),
+    )
+    # Hard cap on a single tool result's size in the LLM context — oversized
+    # outputs are truncated with a marker. Keeps runaway tool output (huge
+    # file dumps, crawling loops) from blowing the context window.
+    max_tool_output_chars: int = Field(
+        default=32_768,
+        validation_alias=AliasChoices("MAX_TOOL_OUTPUT_CHARS"),
     )
 
     # --- Input validation / abuse prevention (user request payloads) ---

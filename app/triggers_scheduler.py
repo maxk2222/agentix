@@ -35,9 +35,17 @@ class TriggersScheduler:
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
         self._running: Set[str] = set()
+        # Live task refs so in-flight trigger runs are not garbage-collected
+        # and can finish during shutdown instead of being cancelled.
+        self._run_tasks: Set[asyncio.Task] = set()
         # Monotonic start timestamps per running trigger — powers the
         # dashboard live-activity strip without guessing from run records.
         self._running_since: Dict[str, float] = {}
+        # trigger.id -> the asyncio task executing its current run. Registered
+        # inside _run_trigger (covers scheduler-dispatched AND manual runs
+        # alike, since run_trigger_now awaits the coroutine in request context)
+        # so /cancel can reach the in-flight run.
+        self._run_by_trigger: Dict[str, asyncio.Task] = {}
         # Optional callable returning True while destructive maintenance
         # (e.g. a database restore) is in progress; trigger runs are skipped.
         self.maintenance_check: Optional[Any] = None
@@ -47,6 +55,14 @@ class TriggersScheduler:
             return
         logger.info("Starting trigger scheduler loop.")
         self._stop_event.clear()
+        # Any 'pending' run row at boot is a leftover from a crashed or
+        # restarted process — no in-memory task exists that could finish it.
+        try:
+            swept = await self.store.mark_stale_pending_interrupted()
+            if swept:
+                logger.info("Marked %d stale pending trigger run(s) interrupted", swept)
+        except Exception:
+            logger.exception("Stale pending trigger-run sweep failed")
         self._task = asyncio.create_task(self._loop())
 
     async def stop(self) -> None:
@@ -90,29 +106,58 @@ class TriggersScheduler:
 
             # Message-threshold triggers: check if enough new messages exist
             if trigger.schedule_type == "message_threshold":
-                if not await self._threshold_reached(trigger):
+                try:
+                    reached = await self._threshold_reached(trigger)
+                except Exception:
+                    # A failing threshold check must not starve the other
+                    # due triggers — this one stays due and retries next tick.
+                    logger.exception(
+                        "Trigger %s threshold check failed — retrying next tick",
+                        trigger.id,
+                    )
+                    continue
+                if not reached:
                     # Not enough messages yet; just bump next_run_at
                     config = trigger.schedule_config or {}
                     check_min = _positive_int(config.get("check_interval_minutes"), 5)
                     next_run = datetime.now(timezone.utc) + timedelta(minutes=check_min)
-                    await self.store.update_next_run(trigger.id, next_run)
-                    logger.debug(
-                        "Trigger %s threshold not reached, rescheduled to %s",
-                        trigger.id, next_run,
-                    )
+                    try:
+                        await self.store.update_next_run(trigger.id, next_run)
+                        logger.debug(
+                            "Trigger %s threshold not reached, rescheduled to %s",
+                            trigger.id, next_run,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Trigger %s reschedule failed — retrying next tick",
+                            trigger.id,
+                        )
                     continue
 
             self._running.add(trigger.id)
             self._running_since[trigger.id] = time.monotonic()
-            try:
-                # Push next_run_at forward BEFORE running so a crash, a slow
-                # run or a failed run can never re-fire the same slot.
-                if not await self._advance_schedule(trigger):
-                    continue
-                await self._run_trigger(trigger)
-            finally:
+            # Push next_run_at forward BEFORE dispatching so a crash, a slow
+            # run or a failed run can never re-fire the same slot.
+            if not await self._advance_schedule(trigger):
                 self._running.discard(trigger.id)
                 self._running_since.pop(trigger.id, None)
+                continue
+            # Dispatch as a task — a long-running trigger must not block the
+            # other due triggers (head-of-line blocking). The _running guard
+            # above still prevents same-trigger overlap on the next tick.
+            task = asyncio.create_task(self._run_and_untrack(trigger))
+            self._run_tasks.add(task)
+            task.add_done_callback(self._run_tasks.discard)
+
+    async def _run_and_untrack(self, trigger: TriggerEntry) -> None:
+        try:
+            await self._run_trigger(trigger)
+        except Exception:
+            logger.exception("Trigger '%s' run failed unexpectedly", trigger.name)
+        finally:
+            self._running.discard(trigger.id)
+            self._running_since.pop(trigger.id, None)
+            self._run_by_trigger.pop(trigger.id, None)
 
     async def _threshold_reached(self, trigger: TriggerEntry) -> bool:
         if not self.message_store or not trigger.watch_assistants:
@@ -166,17 +211,23 @@ class TriggersScheduler:
     async def _run_trigger(self, trigger: TriggerEntry) -> None:
         logger.info("Running trigger '%s' (%s)", trigger.name, trigger.id)
         conversation_id = f"trigger-{trigger.name}"
-        run_id = await self.store.create_run(
-            trigger_id=trigger.id,
-            status="pending",
-            conversation_id=conversation_id,
-        )
         result_text: Optional[str] = None
         error_text: Optional[str] = None
         status = "success"
         retrieval_info: Dict[str, Any] = {}
+        run_id = 0
 
         try:
+            run_id = await self.store.create_run(
+                trigger_id=trigger.id,
+                status="pending",
+                conversation_id=conversation_id,
+            )
+            # Expose the executing task for /cancel — works for scheduler-
+            # dispatched tasks and for run_trigger_now (request context) alike.
+            current = asyncio.current_task()
+            if current is not None:
+                self._run_by_trigger[trigger.id] = current
             if not self.rag_app or not getattr(self.rag_app, "ready", False):
                 raise RuntimeError("RAG application not ready")
 
@@ -250,7 +301,7 @@ class TriggersScheduler:
                         trigger.name, len(messages),
                     )
 
-            run_timeout = float(trigger.timeout_seconds or 600)
+            run_timeout = float(trigger.timeout_seconds or 14400)
             if trigger.target_type == "chain":
                 from app.agent_chains_store import AgentChainsStore
                 engine = getattr(self.rag_app, "engine", None)
@@ -334,8 +385,19 @@ class TriggersScheduler:
                 status,
             )
 
+        except asyncio.CancelledError:
+            # Graceful cancel (admin hit /cancel): keep the status and let the
+            # finish_run block below write the final row. The exception is
+            # deliberately swallowed — the task then ends normally instead of
+            # surfacing an error into the caller (run_trigger_now returns the
+            # run_id of the cancelled run). next_run_at was already advanced
+            # before dispatch, so the schedule keeps moving.
+            logger.warning("Trigger '%s' run cancelled", trigger.name)
+            status = "cancelled"
+            error_text = "Run cancelled by user"
+            result_text = None
         except asyncio.TimeoutError:
-            timeout_s = int(float(trigger.timeout_seconds or 600))
+            timeout_s = int(float(trigger.timeout_seconds or 14400))
             logger.error("Trigger '%s' timed out after %ss", trigger.name, timeout_s)
             status = "error"
             error_text = f"Trigger run timed out after {timeout_s}s"
@@ -346,16 +408,44 @@ class TriggersScheduler:
             error_text = str(exc)
             result_text = None
 
-        await self.store.finish_run(
-            run_id=run_id,
-            status=status,
-            result_text=result_text,
-            error_text=error_text,
-        )
+        # finish_run is best-effort: a failure leaves the row 'pending' until
+        # the next boot's stale-pending sweep closes it as 'interrupted'.
+        if run_id:
+            try:
+                await self.store.finish_run(
+                    run_id=run_id,
+                    status=status,
+                    result_text=result_text,
+                    error_text=error_text,
+                )
+            except Exception:
+                logger.exception(
+                    "Trigger '%s' finish_run failed — run row stays pending",
+                    trigger.name,
+                )
 
     def running_now(self) -> Dict[str, float]:
         """Currently executing trigger ids -> monotonic start timestamps."""
         return dict(self._running_since)
+
+    def cancel_running(self, trigger_id: str) -> bool:
+        """Request cancellation of the trigger's in-flight run.
+
+        Cancels the asyncio task — the CancelledError unwinds through the
+        awaited LLM request (connection close aborts it upstream) and lands in
+        _run_trigger's handler, which marks the run row 'cancelled'. Returns
+        False when nothing is running.
+        """
+        task = self._run_by_trigger.get(trigger_id)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
+
+    async def wait_running(self) -> None:
+        """Await all in-flight trigger runs (used by tests and shutdown)."""
+        if self._run_tasks:
+            await asyncio.gather(*self._run_tasks, return_exceptions=True)
 
     async def run_trigger_now(self, trigger_id: str) -> int:
         """Manually execute a trigger immediately. Returns run_id."""
@@ -382,6 +472,7 @@ class TriggersScheduler:
         finally:
             self._running.discard(trigger.id)
             self._running_since.pop(trigger.id, None)
+            self._run_by_trigger.pop(trigger.id, None)
         # Fetch the run we just created to return its id
         runs = await self.store.list_runs(trigger_id, limit=1)
         return runs[0].id if runs else 0

@@ -33,6 +33,12 @@ from app.history_budget import count_text_tokens, _truncate_summary
 from agent.config import AppConfig
 from agent.exceptions import ConfigurationError
 
+# A single agent turn can legitimately generate for many minutes (large
+# tool-call payloads, long documents) and the upstream may emit nothing while
+# it buffers the tool call — a request timeout below this floor would cut
+# healthy turns in half.
+MIN_LLM_REQUEST_TIMEOUT_SECONDS = 900
+
 logger = logging.getLogger(__name__)
 
 
@@ -484,8 +490,13 @@ class ChainBuilder:
     def _endpoint_client_kwargs(endpoint: ProviderEndpoint) -> Dict[str, Any]:
         """Translate stored provider options into ChatOpenAI client kwargs."""
         kwargs: Dict[str, Any] = {}
-        if endpoint.timeout_seconds is not None:
-            kwargs["request_timeout"] = endpoint.timeout_seconds
+        # A single agent turn can legitimately generate for many minutes
+        # (large tool-call payloads, long documents) and the upstream may
+        # emit nothing while it buffers the tool call — a request timeout
+        # below this floor would cut healthy turns in half.
+        kwargs["request_timeout"] = max(
+            endpoint.timeout_seconds or 0, MIN_LLM_REQUEST_TIMEOUT_SECONDS
+        )
         if endpoint.max_retries is not None:
             kwargs["max_retries"] = endpoint.max_retries
         headers = endpoint.headers_dict()

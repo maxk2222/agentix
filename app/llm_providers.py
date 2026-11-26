@@ -126,7 +126,7 @@ class LLMProvider:
     enabled: bool = True
     is_default: bool = False
     provider_type: str = "openai-compatible"
-    timeout_seconds: int = 30
+    timeout_seconds: int = 900
     max_retries: int = 3
     extra_headers: Optional[Dict[str, str]] = None
     created_at: Optional[str] = None
@@ -169,7 +169,7 @@ class LLMProviderStore:
                         enabled BOOLEAN NOT NULL DEFAULT true,
                         is_default BOOLEAN NOT NULL DEFAULT false,
                         provider_type TEXT NOT NULL DEFAULT 'openai-compatible',
-                        timeout_seconds INTEGER NOT NULL DEFAULT 30,
+                        timeout_seconds INTEGER NOT NULL DEFAULT 900,
                         max_retries INTEGER NOT NULL DEFAULT 3,
                         extra_headers TEXT,
                         created_at timestamptz NOT NULL DEFAULT now(),
@@ -694,7 +694,7 @@ class LLMProviderStore:
                 enabled=item.get("enabled", True),
                 is_default=item.get("is_default", False),
                 provider_type=item.get("provider_type", "openai-compatible"),
-                timeout_seconds=item.get("timeout_seconds", 30),
+                timeout_seconds=item.get("timeout_seconds", 900),
                 max_retries=item.get("max_retries", 3),
                 extra_headers=item.get("extra_headers"),
                 supports_native_tool_calls=item.get("supports_native_tool_calls"),

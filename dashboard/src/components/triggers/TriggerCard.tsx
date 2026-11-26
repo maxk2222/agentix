@@ -1,4 +1,4 @@
-import { Copy, History, Loader, Play, Settings2, Trash2 } from 'lucide-react'
+import { Copy, History, Loader, Play, Settings2, Square, Trash2 } from 'lucide-react'
 import type { TriggerEntry } from '../../api/client'
 import EntityCard from '../EntityCard'
 import ActionsMenu, { type ActionMenuItem } from '../ActionsMenu'
@@ -19,6 +19,7 @@ export function TriggerCard({
   onDuplicate,
   onDelete,
   onRunNow,
+  onStop,
   onToggle,
   $t,
 }: {
@@ -31,6 +32,7 @@ export function TriggerCard({
   onDuplicate: () => void
   onDelete: () => void
   onRunNow: () => void
+  onStop: () => void
   onToggle: () => void
   $t: (key: string) => string
 }) {
@@ -40,6 +42,13 @@ export function TriggerCard({
   const menuItems: ActionMenuItem[] = [
     { icon: Settings2, label: $t('triggers.edit'), onClick: onEdit },
     { icon: Play, label: $t('triggers.runNow'), hidden: !canRun, onClick: onRunNow },
+    {
+      icon: Square,
+      label: $t('triggers.stopRun'),
+      danger: true,
+      hidden: !canRun || !trigger.is_running,
+      onClick: onStop,
+    },
     { icon: History, label: $t('triggers.history'), onClick: onHistory },
     { icon: Copy, label: $t('common.duplicate'), hidden: !canWrite, onClick: onDuplicate },
     { icon: Trash2, label: $t('common.delete'), danger: true, hidden: !canWrite, onClick: onDelete },

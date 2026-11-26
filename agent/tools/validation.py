@@ -32,7 +32,7 @@ _TOOL_ARG_LIMITS: Dict[str, Dict[str, Any]] = {
 }
 
 # Maximum characters returned by any single tool call to the LLM
-MAX_TOOL_OUTPUT_CHARS = 250_000
+MAX_TOOL_OUTPUT_CHARS = 32_768
 
 
 def _coerce_type(value: Any, expected_type: str) -> Any:

@@ -47,7 +47,7 @@ flowchart LR
     end
 ```
 
-Argument normalisation (`agent/tools/validation.py`) coerces types against the JSON schema (e.g. strings → arrays, unknown args → notes appended to the result). Outputs are truncated via `truncate_tool_output` (15,000 chars + continuation footer).
+Argument normalisation (`agent/tools/validation.py`) coerces types against the JSON schema (e.g. strings → arrays, unknown args → notes appended to the result). Outputs are truncated via `truncate_tool_output` (`max_tool_output_chars`, default 32,768 chars + continuation footer).
 
 **Same-target serialization.** Within one batch, calls run in parallel — except calls that mutate the same target: a tool can implement `call_conflict_key(args)` returning a hashable key, and batch calls sharing `(tool_name, key)` execute sequentially in call order so each sees the previous call's result. Otherwise parallel read-modify-write cycles lose every write but the last (e.g. two `collection_manager` edits on the same file). Implemented by `collection_manager` (`collection/filename`), `agent_workspace` (`path`), `document_generator` (`draft_id`, else `workspace_path`), `image_generate`/`image_edit` (`workspace_path` — artifact saves dedupe on their own), and `code_execution` (`job_id` for job ops, `sandbox-exec` for foreground execs — the shared sandbox namespace makes parallel execs unsafe anyway).
 
@@ -159,7 +159,7 @@ Long runs are bounded by several independent mechanisms:
 - **Compression** — old `ToolMessage` payloads are compacted; emergency truncation (`_hard_truncate`) is the last resort.
 - **Token accounting** — `stringify_message_content` skips `image_url` parts, so base64 never inflates text token budgets.
 - **Content dedup** — see [above](#content-deduplication-_dedup_run_content): identical payloads physically leave the context.
-- **Stream watchdog** — two layers: `STREAM_IDLE_TIMEOUT_SECONDS` aborts an LLM stream that stalls mid-flight, and `RUN_IDLE_TIMEOUT_SECONDS` (default 900s) aborts a run that produces no *real* stream items for that long — tool keepalives are flagged and don't count, so a stuck tool call dies while healthy long jobs (e.g. code_execution) fit inside the window. The observer detects *semantic* stalls instead.
+- **Stream watchdog** — two layers: `STREAM_IDLE_TIMEOUT_SECONDS` aborts an LLM stream that stalls mid-flight, and `RUN_IDLE_TIMEOUT_SECONDS` (default 3600s) aborts a run that produces no *real* stream items for that long — tool keepalives are flagged and don't count, so a stuck tool call dies while healthy long jobs (e.g. code_execution) fit inside the window. The observer detects *semantic* stalls instead.
 
 ## Agent workspace
 

@@ -369,7 +369,8 @@ def test_subagent_manager_idle_seconds_config():
 
     mgr2 = SubagentManager(config={"timeout_seconds": 2400}, conversation_id="c", rag_app=None)
     # legacy config key is ignored; the default idle window applies
-    assert mgr2.idle_seconds == 300.0
+    from agent.stream_watchdog import DEFAULT_STREAM_IDLE_SECONDS
+    assert mgr2.idle_seconds == DEFAULT_STREAM_IDLE_SECONDS
 
 
 def test_record_token_collects_observer_events_and_caps():

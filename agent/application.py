@@ -1011,7 +1011,10 @@ class RAGApplication:
         runner: Optional[AgentRunner] = None
         if agent_enabled and allowed_tools and self._chain_builder is not None:
             try:
-                llm = await self._chain_builder._get_agent_llm(model_name, max_tokens=None)
+                llm = await self._chain_builder._get_agent_llm(
+                    model_name,
+                    max_tokens=getattr(self.config, "agent_max_tokens_per_turn", 0) or None,
+                )
                 max_iterations = assistant_entry.get("max_iterations") or 10
                 max_tool_calls = assistant_entry.get("max_tool_calls") or 10
                 max_parallel_tool_calls = assistant_entry.get("max_parallel_tool_calls") or 5
@@ -1041,6 +1044,7 @@ class RAGApplication:
                     summary_llm_factory=lambda: asyncio.create_task(self.get_metadata_llm(model_name, "summary")) if rh_settings.enabled else None,
                     subagent_state=subagent_state,
                     stream_idle_seconds=getattr(self.config, "stream_idle_timeout_seconds", DEFAULT_STREAM_IDLE_SECONDS),
+                    max_tool_output_chars=getattr(self.config, "max_tool_output_chars", 32_768),
                     observer=observer,
                     workspace_ctx=workspace_ctx,
                 )
@@ -1251,7 +1255,10 @@ class RAGApplication:
         runner: Optional[AgentRunner] = None
         if agent_enabled and allowed_tools and self._chain_builder is not None:
             try:
-                llm = await self._chain_builder._get_agent_llm(model_name, max_tokens=None)
+                llm = await self._chain_builder._get_agent_llm(
+                    model_name,
+                    max_tokens=getattr(self.config, "agent_max_tokens_per_turn", 0) or None,
+                )
                 max_iterations = assistant_entry.get("max_iterations") or 10
                 max_tool_calls = assistant_entry.get("max_tool_calls") or 10
                 max_parallel_tool_calls = assistant_entry.get("max_parallel_tool_calls") or 5
@@ -1281,6 +1288,7 @@ class RAGApplication:
                     summary_llm_factory=lambda: asyncio.create_task(self.get_metadata_llm(model_name, "summary")) if rh_settings.enabled else None,
                     subagent_state=subagent_state,
                     stream_idle_seconds=getattr(self.config, "stream_idle_timeout_seconds", DEFAULT_STREAM_IDLE_SECONDS),
+                    max_tool_output_chars=getattr(self.config, "max_tool_output_chars", 32_768),
                     injected_input_queue=injected_input_queue,
                     input_event=input_event,
                     observer=observer,

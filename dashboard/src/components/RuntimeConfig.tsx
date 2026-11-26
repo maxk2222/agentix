@@ -479,7 +479,7 @@ export default function RuntimeConfig() {
       enabled: true,
       is_default: false,
       provider_type: 'openai-compatible',
-      timeout_seconds: 30,
+      timeout_seconds: 900,
       max_retries: 3,
       extra_headers: null,
       supports_native_tool_calls: null,

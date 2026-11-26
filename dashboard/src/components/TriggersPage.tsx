@@ -164,6 +164,16 @@ export default function TriggersPage() {
     }
   }
 
+  const handleStop = async (trigger: TriggerEntry) => {
+    if (!canRun || !trigger.is_running) return
+    try {
+      await triggersApi.cancel(trigger.id)
+      load()
+    } catch (err) {
+      setError(String(err))
+    }
+  }
+
   if (loading) return <div className="loading">{$t('common.loading')}</div>
 
   return (
@@ -211,6 +221,7 @@ export default function TriggersPage() {
               onDuplicate={() => handleDuplicate(trigger)}
               onDelete={() => setDeleteTarget(trigger)}
               onRunNow={() => handleRunNow(trigger)}
+              onStop={() => handleStop(trigger)}
               onToggle={() => handleToggle(trigger)}
               $t={$t}
             />

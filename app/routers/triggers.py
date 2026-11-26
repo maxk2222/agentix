@@ -34,7 +34,7 @@ class TriggerCreatePayload(BaseModel):
     watch_assistants: List[str] = Field(default_factory=list)
     target_type: str = "assistant"  # "assistant" | "chain"
     target_name: str = ""
-    timeout_seconds: int = Field(default=600, ge=10, le=3600)
+    timeout_seconds: int = Field(default=14400, ge=10, le=21600)
 
 
 class TriggerUpdatePayload(BaseModel):
@@ -50,7 +50,7 @@ class TriggerUpdatePayload(BaseModel):
     watch_assistants: List[str] = Field(default_factory=list)
     target_type: str = "assistant"
     target_name: str = ""
-    timeout_seconds: int = Field(default=600, ge=10, le=3600)
+    timeout_seconds: int = Field(default=14400, ge=10, le=21600)
 
 
 class TriggerResponse(BaseModel):
@@ -285,6 +285,18 @@ async def run_trigger_now(request: Request, trigger_id: str):
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     return {"success": True, "run_id": run_id}
+
+
+@router.post("/{trigger_id}/cancel")
+async def cancel_trigger_run(request: Request, trigger_id: str):
+    """Abort the trigger's in-flight run; the run row ends as 'cancelled'."""
+    await require_permission(request, "triggers:run")
+    scheduler = _get_scheduler(request)
+    if scheduler is None:
+        raise HTTPException(status_code=503, detail="Trigger scheduler not available")
+    if not scheduler.cancel_running(trigger_id):
+        raise HTTPException(status_code=409, detail="Trigger has no running run")
+    return {"success": True, "cancelled": True}
 
 
 @router.get("/{trigger_id}/runs", response_model=List[TriggerRunResponse])

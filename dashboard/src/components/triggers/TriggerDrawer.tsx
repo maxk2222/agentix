@@ -331,12 +331,12 @@ export function TriggerDrawer({
             <input
               type="number"
               min={10}
-              max={3600}
+              max={21600}
               step={10}
-              value={draft.timeout_seconds ?? 600}
+              value={draft.timeout_seconds ?? 14400}
               onChange={(e) => {
                 const v = parseInt(e.target.value)
-                update('timeout_seconds', Number.isNaN(v) ? 600 : Math.min(3600, Math.max(10, v)))
+                update('timeout_seconds', Number.isNaN(v) ? 14400 : Math.min(21600, Math.max(10, v)))
               }}
               disabled={!canWrite}
             />
@@ -373,7 +373,7 @@ function RunHistory({ triggerId, $t }: { triggerId: string; $t: (key: string) =>
   const [runs, setRuns] = useState<TriggerRunEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'error' | 'pending'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'error' | 'pending' | 'cancelled' | 'interrupted'>('all')
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc')
   const [expandedRun, setExpandedRun] = useState<number | null>(null)
 
@@ -403,13 +403,13 @@ function RunHistory({ triggerId, $t }: { triggerId: string; $t: (key: string) =>
     <div>
       <div className="run-toolbar">
         <div className="seg-control">
-          {(['all', 'success', 'error', 'pending'] as const).map((s) => (
+          {(['all', 'success', 'error', 'pending', 'cancelled', 'interrupted'] as const).map((s) => (
             <button
               key={s}
               className={`seg-btn ${statusFilter === s ? 'active' : ''}`}
               onClick={() => setStatusFilter(s)}
             >
-              {s === 'all' ? $t('triggers.filterAll') : s === 'success' ? '✓' : s === 'error' ? '✗' : '⏳'}
+              {s === 'all' ? $t('triggers.filterAll') : s === 'success' ? '✓' : s === 'error' ? '✗' : s === 'pending' ? '⏳' : s}
             </button>
           ))}
         </div>

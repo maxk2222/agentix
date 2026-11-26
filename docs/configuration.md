@@ -55,8 +55,10 @@ Selected settings can also be stored in the `runtime_config` DB table via the da
 | `ALLOW_NON_STRING_CONTENT` | `false` |
 | `VALIDATION_CONTROL_CHARS_MODE` | `reject` |
 | `VALIDATION_ENFORCE` | `true` |
-| `STREAM_IDLE_TIMEOUT_SECONDS` | `300.0` (LLM token-level idle watchdog — aborts an in-flight LLM stream after N seconds without a token; legacy `STREAMING_TIMEOUT_SECONDS` still accepted) |
-| `RUN_IDLE_TIMEOUT_SECONDS` | `900.0` (run-level idle watchdog — aborts a run after N seconds without a *real* stream item: token, reasoning, tool or subagent event; synthetic tool keepalives do not count. Should stay above the sandbox `SANDBOX_INSTALL_TIMEOUT` + `SANDBOX_EXEC_MAX_TIMEOUT` budgets so a healthy code_execution fits one silent window) |
+| `STREAM_IDLE_TIMEOUT_SECONDS` | `900.0` (LLM token-level idle watchdog — aborts an in-flight LLM stream after N seconds without a token; legacy `STREAMING_TIMEOUT_SECONDS` still accepted) |
+| `RUN_IDLE_TIMEOUT_SECONDS` | `3600.0` (run-level idle watchdog — aborts a run after N seconds without a *real* stream item: token, reasoning, tool or subagent event; synthetic tool keepalives do not count. Should stay above the sandbox `SANDBOX_INSTALL_TIMEOUT` + `SANDBOX_EXEC_MAX_TIMEOUT` budgets so a healthy code_execution fits one silent window) |
+| `AGENT_MAX_TOKENS_PER_TURN` | `32768` (hard output cap per agent LLM turn — a degenerate generation ends at `finish_reason=length` instead of running to the model context limit; `0` disables) |
+| `MAX_TOOL_OUTPUT_CHARS` | `32768` (hard cap on a single tool result's size in the LLM context — oversized outputs are truncated with a marker) |
 
 ## History & retrieval tuning
 
@@ -429,7 +431,7 @@ Schedule, target URL, credentials and retention are configured **at runtime** in
 
 ## Builtin tool parameters
 
-`rag_search` (actions `search`/`list`/`read`) and `collection_manager` (actions `create`/`delete`/`list`/`read`/`edit`) share the same paging/navigation arguments; all tool output is capped at 15,000 characters per call and ends with a footer naming the actual range plus the next offset/lines_start to continue with.
+`rag_search` (actions `search`/`list`/`read`) and `collection_manager` (actions `create`/`delete`/`list`/`read`/`edit`) share the same paging/navigation arguments; all tool output is capped at 32,768 characters per call and ends with a footer naming the actual range plus the next offset/lines_start to continue with.
 
 | Parameter | Applies to | Meaning |
 |---|---|---|

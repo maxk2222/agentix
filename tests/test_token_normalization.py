@@ -168,11 +168,11 @@ class TestTriggerTimeoutBounds:
         payload = TriggerCreatePayload(
             name="t", assistant_name="a", prompt="p", schedule_type="interval"
         )
-        assert payload.timeout_seconds == 600
+        assert payload.timeout_seconds == 14400
         update = TriggerUpdatePayload(
             name="t", assistant_name="a", prompt="p", schedule_type="interval"
         )
-        assert update.timeout_seconds == 600
+        assert update.timeout_seconds == 14400
 
     def test_bounds(self):
         from pydantic import ValidationError
@@ -187,10 +187,10 @@ class TestTriggerTimeoutBounds:
         with pytest.raises(ValidationError):
             TriggerCreatePayload(
                 name="t", assistant_name="a", prompt="p",
-                schedule_type="interval", timeout_seconds=3601,
+                schedule_type="interval", timeout_seconds=21601,
             )
         ok = TriggerCreatePayload(
             name="t", assistant_name="a", prompt="p",
-            schedule_type="interval", timeout_seconds=3600,
+            schedule_type="interval", timeout_seconds=21600,
         )
-        assert ok.timeout_seconds == 3600
+        assert ok.timeout_seconds == 21600

@@ -73,6 +73,26 @@ class FakeStore:
                 t.last_run_at = last_run_at
                 break
 
+    async def get_trigger(self, trigger_id: str) -> Optional[TriggerEntry]:
+        for t in self.triggers:
+            if t.id == trigger_id:
+                return t
+        return None
+
+    async def list_runs(self, trigger_id: str, limit: int = 50, **kwargs: Any) -> List[Any]:
+        rows = [r for r in self.runs if r["trigger_id"] == trigger_id]
+        return [type("Run", (), r) for r in rows[:limit]]
+
+    async def mark_stale_pending_interrupted(self) -> int:
+        swept = 0
+        for run in self.runs:
+            if run["status"] == "pending" and run.get("finished_at") is None:
+                run["status"] = "interrupted"
+                run["error_text"] = "Interrupted: service restarted"
+                run["finished_at"] = datetime.now(timezone.utc)
+                swept += 1
+        return swept
+
 
 class FakeMessageStore:
     """Fake message store for counting/fetching messages."""
@@ -241,6 +261,7 @@ async def test_message_threshold_not_reached_reschedules_only(fake_store, fake_r
     )
 
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert len(fake_rag.calls) == 0  # Did not run
     assert fake_store.triggers[0].next_run_at > now  # Rescheduled
@@ -268,6 +289,7 @@ async def test_message_threshold_reached_runs_trigger(fake_store, fake_rag):
     )
 
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert len(fake_rag.calls) == 1  # Ran
     assert fake_store.runs[0]["status"] == "success"
@@ -299,6 +321,7 @@ async def test_include_new_messages_appended_to_prompt(fake_store, fake_rag):
     )
 
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert len(fake_rag.calls) == 1
     assert "Original prompt" in fake_rag.calls[0]["input_text"]
@@ -331,6 +354,7 @@ async def test_include_new_messages_excludes_trigger_turns(fake_store, fake_rag)
     )
 
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert len(fake_rag.calls) == 1
     text = fake_rag.calls[0]["input_text"]
@@ -365,6 +389,7 @@ async def test_include_new_messages_groups_by_assistant_and_conversation(fake_st
     )
 
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert len(fake_rag.calls) == 1
     text = fake_rag.calls[0]["input_text"]
@@ -396,6 +421,7 @@ async def test_include_new_messages_no_messages_prompt_unchanged(fake_store, fak
     )
 
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert len(fake_rag.calls) == 1
     assert fake_rag.calls[0]["input_text"] == "Original prompt"
@@ -417,6 +443,7 @@ async def test_conversation_id_passed_to_rag_app(fake_store, fake_rag):
     )
 
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert len(fake_rag.calls) == 1
     assert fake_rag.calls[0]["conversation_id"] == "trigger-memory-trigger"
@@ -443,6 +470,7 @@ async def test_include_trigger_history_passes_chat_history(fake_store, fake_rag)
     )
 
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert len(fake_rag.calls) == 1
     chat_history = fake_rag.calls[0]["chat_history"]
@@ -473,6 +501,7 @@ async def test_include_trigger_history_false_no_chat_history(fake_store, fake_ra
     )
 
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert len(fake_rag.calls) == 1
     assert fake_rag.calls[0]["chat_history"] == []
@@ -497,6 +526,7 @@ async def test_last_run_at_not_updated_on_error(fake_store):
     )
 
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert fake_store.triggers[0].last_run_at == original_last_run
     assert fake_store.runs[0]["status"] == "error"
@@ -524,6 +554,7 @@ async def test_trigger_history_skips_empty_assistant_content(fake_store, fake_ra
     )
 
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert len(fake_rag.calls) == 1
     chat_history = fake_rag.calls[0]["chat_history"]
@@ -559,6 +590,7 @@ async def test_trigger_history_respects_max_history_turns(fake_store, fake_rag):
     )
 
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert len(fake_rag.calls) == 1
     chat_history = fake_rag.calls[0]["chat_history"]
@@ -592,6 +624,7 @@ async def test_scheduler_rag_app_reference_updated_after_reload(fake_store):
     sched.rag_app = new_rag
 
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert len(new_rag.calls) == 1
     assert new_rag.calls[0]["input_text"] == "prompt"
@@ -619,6 +652,7 @@ async def test_cron_run_advances_next_run_into_the_future(fake_store, fake_rag):
     sched = TriggersScheduler(store=fake_store, rag_app=fake_rag, message_store=None)
 
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert len(fake_rag.calls) == 1
     assert fake_store.triggers[0].next_run_at > now
@@ -640,7 +674,9 @@ async def test_trigger_does_not_refire_on_next_tick(fake_store, fake_rag):
     sched = TriggersScheduler(store=fake_store, rag_app=fake_rag, message_store=None)
 
     await sched.check_and_run()
+    await sched.wait_running()
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert len(fake_rag.calls) == 1  # exactly one run, no catch-up firing
 
@@ -662,7 +698,9 @@ async def test_failed_run_still_advances_next_run(fake_store):
     sched = TriggersScheduler(store=fake_store, rag_app=fake_rag, message_store=None)
 
     await sched.check_and_run()
+    await sched.wait_running()
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert fake_store.runs[0]["status"] == "error"
     assert len(fake_store.runs) == 1  # no immediate retry
@@ -685,8 +723,176 @@ async def test_unschedulable_trigger_is_disabled(fake_store, fake_rag):
     sched = TriggersScheduler(store=fake_store, rag_app=fake_rag, message_store=None)
 
     await sched.check_and_run()
+    await sched.wait_running()
 
     assert fake_rag.calls == []
     assert fake_store.triggers[0].enabled is False
     assert fake_store.runs[0]["status"] == "error"
     assert "Unschedulable" in (fake_store.runs[0]["error_text"] or "")
+
+
+# ------------------------------------------------------------------------------
+# Parallel dispatch, cancellation, stale sweep
+# ------------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_due_triggers_dispatch_in_parallel(fake_store):
+    """A slow trigger must not head-of-line block other due triggers."""
+    import asyncio
+
+    now = datetime.now(timezone.utc)
+    fake_store.triggers = [
+        TriggerEntry(
+            id="slow", name="slow", assistant_name="a", prompt="p",
+            schedule_type="interval", schedule_config={"minutes": 10},
+            next_run_at=now,
+        ),
+        TriggerEntry(
+            id="fast", name="fast", assistant_name="a", prompt="p",
+            schedule_type="interval", schedule_config={"minutes": 10},
+            next_run_at=now,
+        ),
+    ]
+    release = asyncio.Event()
+
+    class BlockingRag(FakeRagApp):
+        async def run(self, *, input_text, chat_history, model_name,
+                      retrieval_info, conversation_id=None):
+            self.calls.append({"conversation_id": conversation_id})
+            if "slow" in conversation_id:
+                await release.wait()
+            return {"answer": "ok"}
+
+    rag = BlockingRag()
+    sched = TriggersScheduler(store=fake_store, rag_app=rag, message_store=None)
+
+    await sched.check_and_run()
+    await asyncio.sleep(0)  # let the dispatched tasks start
+
+    # The fast trigger must complete while the slow one is still in flight.
+    for _ in range(50):
+        fast_done = any(r["trigger_id"] == "fast" and r["status"] == "success"
+                        for r in fake_store.runs)
+        if fast_done:
+            break
+        await asyncio.sleep(0.01)
+    assert fast_done
+    assert "slow" in sched._running  # still running, not blocking
+
+    release.set()
+    await sched.wait_running()
+    assert {r["trigger_id"] for r in fake_store.runs} == {"slow", "fast"}
+
+
+@pytest.mark.asyncio
+async def test_cancel_running_marks_run_cancelled(fake_store):
+    import asyncio
+
+    now = datetime.now(timezone.utc)
+    fake_store.triggers = [
+        TriggerEntry(
+            id="t1", name="long", assistant_name="a", prompt="p",
+            schedule_type="interval", schedule_config={"minutes": 10},
+            next_run_at=now,
+        ),
+    ]
+
+    class SlowRag(FakeRagApp):
+        async def run(self, **kwargs):
+            await asyncio.sleep(60)
+            return {"answer": "done"}
+
+    sched = TriggersScheduler(store=fake_store, rag_app=SlowRag(), message_store=None)
+
+    await sched.check_and_run()
+    await asyncio.sleep(0)
+    assert sched.cancel_running("t1") is True
+    await sched.wait_running()
+
+    assert fake_store.runs[0]["status"] == "cancelled"
+    assert "t1" not in sched._running
+    # The slot was already advanced before dispatch — schedule keeps moving.
+    assert fake_store.triggers[0].next_run_at > now
+
+
+@pytest.mark.asyncio
+async def test_cancel_running_returns_false_when_idle(fake_store, scheduler):
+    assert scheduler.cancel_running("t1") is False
+
+
+@pytest.mark.asyncio
+async def test_start_sweeps_stale_pending_runs(fake_store, fake_rag):
+    fake_store.runs.append({
+        "id": 1, "trigger_id": "t1", "status": "pending",
+        "conversation_id": "c", "finished_at": None,
+    })
+    sched = TriggersScheduler(store=fake_store, rag_app=fake_rag, message_store=None)
+
+    await sched.start()
+    try:
+        assert fake_store.runs[0]["status"] == "interrupted"
+    finally:
+        await sched.stop()
+
+
+@pytest.mark.asyncio
+async def test_threshold_check_failure_does_not_starve_others(fake_store, fake_rag):
+    """A throwing threshold check must not eat the tick for other triggers."""
+    now = datetime.now(timezone.utc)
+    fake_store.triggers = [
+        TriggerEntry(
+            id="bad", name="bad-threshold", assistant_name="a", prompt="p",
+            schedule_type="message_threshold",
+            schedule_config={"check_interval_minutes": 5, "message_threshold": 2},
+            next_run_at=now,
+            watch_assistants=["a"],
+        ),
+        TriggerEntry(
+            id="good", name="good", assistant_name="a", prompt="p",
+            schedule_type="interval", schedule_config={"minutes": 10},
+            next_run_at=now,
+        ),
+    ]
+
+    class ThrowingMsgStore(FakeMessageStore):
+        async def count_messages_for_assistants(self, **kwargs):
+            raise RuntimeError("db gone")
+
+    sched = TriggersScheduler(
+        store=fake_store, rag_app=fake_rag, message_store=ThrowingMsgStore(),
+    )
+
+    await sched.check_and_run()
+    await sched.wait_running()
+
+    assert any(c["conversation_id"] == "trigger-good" for c in fake_rag.calls)
+    assert fake_store.runs[0]["trigger_id"] == "good"
+
+
+@pytest.mark.asyncio
+async def test_manual_run_can_be_cancelled(fake_store):
+    """run_trigger_now registers its task — /cancel reaches manual runs too."""
+    import asyncio
+
+    now = datetime.now(timezone.utc)
+    fake_store.triggers = [
+        TriggerEntry(
+            id="t1", name="manual", assistant_name="a", prompt="p",
+            schedule_type="interval", schedule_config={"minutes": 10},
+            next_run_at=now + timedelta(hours=1),  # not due; manual only
+        ),
+    ]
+
+    class SlowRag(FakeRagApp):
+        async def run(self, **kwargs):
+            await asyncio.sleep(60)
+            return {"answer": "done"}
+
+    sched = TriggersScheduler(store=fake_store, rag_app=SlowRag(), message_store=None)
+
+    run_task = asyncio.create_task(sched.run_trigger_now("t1"))
+    await asyncio.sleep(0)
+    assert sched.cancel_running("t1") is True
+    await run_task
+
+    assert fake_store.runs[0]["status"] == "cancelled"

@@ -1456,6 +1456,10 @@ export const triggers = {
     api<{ success: boolean; run_id: number }>(`/admin/triggers/${encodeURIComponent(id)}/run`, {
       method: 'POST',
     }),
+  cancel: (id: string) =>
+    api<{ success: boolean; cancelled: boolean }>(`/admin/triggers/${encodeURIComponent(id)}/cancel`, {
+      method: 'POST',
+    }),
   runs: (id: string, limit = 50, status?: string, sort_order = 'desc') => {
     const qs = new URLSearchParams()
     qs.set('limit', String(limit))

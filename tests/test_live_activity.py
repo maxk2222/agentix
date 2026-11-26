@@ -219,6 +219,7 @@ async def test_scheduler_running_now_tracks_and_cleans(monkeypatch):
     monkeypatch.setattr(scheduler, "_run_trigger", AsyncMock(side_effect=fake_run))
     store.get_due_triggers = AsyncMock(return_value=[trigger])
     await scheduler.check_and_run()
+    await scheduler.wait_running()
     assert seen_during_run and "t-1" in seen_during_run[0]
     assert isinstance(seen_during_run[0]["t-1"], float)
     assert scheduler.running_now() == {}

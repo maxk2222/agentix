@@ -20,7 +20,11 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence, Tuple
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
 from agent.tools import ToolRegistry
-from agent.tools.validation import validate_and_normalize_args, truncate_tool_output
+from agent.tools.validation import (
+    MAX_TOOL_OUTPUT_CHARS,
+    validate_and_normalize_args,
+    truncate_tool_output,
+)
 from app.chat_utils import render_system_instructions, _format_current_datetime_german, extract_usage_metadata, count_tokens, stringify_message_content
 from app.context_summarizer import summarize_context_if_needed, _hard_truncate
 from app.history_budget import RollingHistorySettings, count_text_tokens, count_messages_tokens
@@ -527,12 +531,18 @@ class AgentRunner:
         summary_llm_factory: Optional[Any] = None,
         subagent_state: Optional[SubagentState] = None,
         stream_idle_seconds: float = DEFAULT_STREAM_IDLE_SECONDS,
+        max_tool_output_chars: int = MAX_TOOL_OUTPUT_CHARS,
         injected_input_queue: Optional[asyncio.Queue] = None,
         input_event: Optional[asyncio.Event] = None,
         observer: Optional[Any] = None,
         workspace_ctx: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._idle_seconds = stream_idle_seconds
+        # <=0 would make content[:-N] slice from the end — treat as "unset".
+        self._max_tool_output_chars = (
+            max_tool_output_chars if max_tool_output_chars and max_tool_output_chars > 0
+            else MAX_TOOL_OUTPUT_CHARS
+        )
         self.registry = registry
         self.tool_names = tool_names
         self.max_iterations = max_iterations
@@ -1339,7 +1349,7 @@ class AgentRunner:
             note_text = f"[Tool argument note: {'; '.join(arg_notes)}]"
             content = f"{content}\n\n{note_text}" if content.strip() else note_text
 
-        truncated = truncate_tool_output(content)
+        truncated = truncate_tool_output(content, max_chars=self._max_tool_output_chars)
         record.output_chars = len(truncated)
         record.truncated = truncated != content
 
